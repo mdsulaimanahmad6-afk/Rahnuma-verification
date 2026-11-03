@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Device Verification</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <style>
+        :root {
+            --bg: #0f172a;
+            --card-bg: #1e293b;
+            --blue: #3b82f6;
+            --green: #22c55e;
+            --red: #ef4444;
+            --text: #f8fafc;
+            --text-muted: #94a3b8;
+        }
+        * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+        body {
+            background-color: var(--bg);
+            color: var(--text);
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+        
+        /* Header */
+        .header {
+            width: 100%;
+            padding: 15px 20px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background: #0b1120;
+        }
+        .header-title { font-weight: bold; font-size: 16px; display: flex; align-items: center; gap: 10px;}
+        .status-badge {
+            padding: 5px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: bold;
+            background: rgba(59, 130, 246, 0.2);
+            color: var(--blue);
+            border: 1px solid var(--blue);
+        }
+
+        /* 3D Card */
+        .card-container {
+            margin: 30px 0;
+            perspective: 1000px;
+            width: 320px;
+            height: 200px;
+            position: relative;
+        }
+        .card {
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(135deg, #2563eb, #1d4ed8);
+            border-radius: 20px;
+            padding: 20px;
+            box-shadow: 0 20px 40px rgba(37, 99, 235, 0.4);
+            transform: rotateY(-15deg) rotateX(10deg);
+            transition: all 0.5s ease;
+            position: relative;
+            overflow: hidden;
+        }
+        .card::after {
+            content: '';
+            position: absolute;
+            top: -50%; left: -50%;
+            width: 200%; height: 200%;
+            background: linear-gradient(45deg, transparent 40%, rgba(255,255,255,0.2) 50%, transparent 60%);
+            animation: shine 3s infinite;
+        }
+        @keyframes shine {
+            0% { transform: translateX(-100%) translateY(-100%); }
+            100% { transform: translateX(100%) translateY(100%); }
+        }
+        .card-top { display: flex; justify-content: space-between; font-size: 12px; opacity: 0.8; }
+        .card-id { margin-top: 40px; font-size: 24px; font-weight: bold; letter-spacing: 2px; text-shadow: 0 2px 4px rgba(0,0,0,0.3); }
+        .card-user { margin-top: 15px; display: flex; align-items: center; gap: 10px; font-size: 14px; }
+        .card-user img { width: 24px; height: 24px; border-radius: 50%; }
+
+        /* Bottom Panel */
+        .panel {
+            background: var(--card-bg);
+            width: 100%;
+            flex: 1;
+            border-radius: 30px 30px 0 0;
+            padding: 30px 20px;
+            box-shadow: 0 -10px 30px rgba(0,0,0,0.5);
+            text-align: center;
+        }
+        .panel h2 { margin: 0 0 10px; font-size: 28px; }
+        .panel p { color: var(--text-muted); font-size: 14px; margin-bottom: 20px; }
+        
+        /* Progress Bar */
+        .progress-container { margin: 20px 0; }
+        .progress-text { display: flex; justify-content: space-between; font-size: 14px; margin-bottom: 8px; }
+        .progress-bg { background: #334155; height: 8px; border-radius: 4px; overflow: hidden; }
+        .progress-fill {
+            height: 100%;
+            background: var(--blue);
+            width: 0%;
+            border-radius: 4px;
+            transition: width 0.1s linear;
+        }
+        
+        /* Steps */
+        .steps {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 30px;
+            padding: 0 10px;
+        }
+        .step { display: flex; flex-direction: column; align-items: center; font-size: 12px; color: var(--text-muted); gap: 8px; width: 70px;}
+        .step-circle {
+            width: 30px; height: 30px; border-radius: 50%; border: 2px solid #475569;
+            display: flex; justify-content: center; align-items: center; font-size: 14px;
+        }
+        .step-circle.active { border-color: var(--blue); color: var(--blue); }
+        .step-circle.success { border-color: var(--green); background: var(--green); color: white; }
+        .step-circle.error { border-color: var(--red); background: var(--red); color: white; }
+        .step-line { flex: 1; height: 2px; background: #475569; margin-top: -20px; }
+
+        /* Buttons */
+        .btn {
+            width: 100%; padding: 16px; border-radius: 12px; border: none;
+            font-size: 16px; font-weight: bold; color: white; margin-top: 20px;
+            cursor: pointer; transition: 0.2s;
+        }
+        .btn:active { transform: scale(0.98); }
+        .btn-blue { background: var(--blue); }
+        .btn-red { background: var(--red); }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <div class="header-title">
+            <span style="font-size:20px;">🔒</span> Cash UPI Rewards 🔥
+        </div>
+        <div class="status-badge" id="headerBadge">Checking</div>
+    </div>
+
+    <div class="card-container" id="cardWrapper">
+        <div class="card" id="vCard">
+            <div class="card-top">
+                <span>Device verification</span>
+                <span id="cardStatus">Checking</span>
+            </div>
+            <div class="card-id" id="displayId">8 215 661 682</div>
+            <div class="card-user" id="userInfo" style="display:none;">
+                <img id="userPic" src="" alt="User">
+                <span id="userName"></span>
+            </div>
+        </div>
+    </div>
+
+    <div class="panel">
+        <h2 id="mainTitle">Checking your device</h2>
+        <p id="mainDesc">Please wait while we verify your device.</p>
+
+        <div class="progress-container" id="progressSection">
+            <div class="progress-text">
+                <span>Getting approval...</span>
+                <span id="percentText">0%</span>
+            </div>
+            <div class="progress-bg">
+                <div class="progress-fill" id="progressFill"></div>
+            </div>
+        </div>
+
+        <div class="steps" id="stepsSection">
+            <div class="step">
+                <div class="step-circle success" id="step1">✓</div>
+                <span>Telegram</span>
+            </div>
+            <div class="step-line"></div>
+            <div class="step">
+                <div class="step-circle active" id="step2">○</div>
+                <span>This phone</span>
+            </div>
+            <div class="step-line"></div>
+            <div class="step">
+                <div class="step-circle" id="step3">○</div>
+                <span>Approving</span>
+            </div>
+        </div>
+
+        <button class="btn btn-blue" id="actionBtn" style="display:none;" onclick="returnToBot()">Back to bot</button>
+    </div>
+
+    <script>
+        const tg = window.Telegram.WebApp;
+        tg.expand();
+        
+        const user = tg.initDataUnsafe?.user;
+        if (user) {
+            document.getElementById('displayId').innerText = user.id.toString().replace(/(\d{3})/g, '$1 ').trim();
+            document.getElementById('userName').innerText = user.first_name;
+            if(user.photo_url) document.getElementById('userPic').src = user.photo_url;
+        }
+
+        // Start Verification Animation
+        function startVerification() {
+            let percent = 0;
+            const interval = setInterval(() => {
+                percent += Math.floor(Math.random() * 15) + 5;
+                if (percent > 82) percent = 82; // Ruk jayega 82% par (fake delay)
+                
+                document.getElementById('progressFill').style.width = percent + '%';
+                document.getElementById('percentText').innerText = percent + '%';
+
+                if (percent >= 82) {
+                    clearInterval(interval);
+                    setTimeout(checkServer, 1000); // 1 sec wait karke server check karega
+                }
+            }, 200);
+        }
+
+        // Server se check karo ki device block hai ya nahi
+        async function checkServer() {
+            try {
+                const res = await fetch('/api/verify', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ user_id: user.id })
+                });
+                const data = await res.json();
+
+                if (data.status === 'success') {
+                    showSuccess();
+                } else {
+                    showError();
+                }
+            } catch (e) {
+                showError();
+            }
+        }
+
+        function showSuccess() {
+            document.getElementById('headerBadge').innerText = "Verified";
+            document.getElementById('headerBadge').style.background = "rgba(34, 197, 94, 0.2)";
+            document.getElementById('headerBadge').style.color = "#22c55e";
+            document.getElementById('headerBadge').style.borderColor = "#22c55e";
+            
+            document.getElementById('cardStatus').innerText = "Verified";
+            document.getElementById('vCard').style.background = "linear-gradient(135deg, #16a34a, #15803d)";
+            document.getElementById('vCard').style.boxShadow = "0 20px 40px rgba(34, 197, 94, 0.4)";
+
+            document.getElementById('mainTitle').innerText = "Verification Complete";
+            document.getElementById('mainDesc').innerText = "Device secured and profile verified.";
+            document.getElementById('progressSection').style.display = "none";
+            
+            document.getElementById('step2').className = "step-circle success";
+            document.getElementById('step2').innerText = "✓";
+            document.getElementById('step3').className = "step-circle success";
+            document.getElementById('step3').innerText = "✓";
+
+            const btn = document.getElementById('actionBtn');
+            btn.style.display = "block";
+            btn.className = "btn btn-blue";
+        }
+
+        function showError() {
+            document.getElementById('headerBadge').innerText = "Not verified";
+            document.getElementById('headerBadge').style.background = "rgba(239, 68, 68, 0.2)";
+            document.getElementById('headerBadge').style.color = "#ef4444";
+            document.getElementById('headerBadge').style.borderColor = "#ef4444";
+            
+            document.getElementById('cardStatus').innerText = "Not verified";
+            document.getElementById('vCard').style.background = "linear-gradient(135deg, #dc2626, #b91c1c)";
+            document.getElementById('vCard').style.boxShadow = "0 20px 40px rgba(239, 68, 68, 0.4)";
+            document.getElementById('userInfo').style.display = "flex"; 
+
+            document.getElementById('mainTitle').innerText = "Not verified";
+            document.getElementById('mainDesc').innerText = "This phone is already linked to another account on this bot.";
+            document.getElementById('progressSection').style.display = "none";
+            
+            document.getElementById('step2').className = "step-circle error";
+            document.getElementById('step2').innerText = "✕";
+            document.getElementById('step3').className = "step-circle";
+
+            const btn = document.getElementById('actionBtn');
+            btn.style.display = "block";
+            btn.className = "btn btn-blue";
+        }
+
+        function returnToBot() {
+            tg.close();
+        }
+
+        window.onload = () => {
+            if(!user) {
+                document.body.innerHTML = "<h2 style='padding:20px'>Please open inside Telegram</h2>";
+                return;
+            }
+            startVerification();
+        };
+    </script>
+</body>
+</html>
