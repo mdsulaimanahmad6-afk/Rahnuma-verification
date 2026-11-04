@@ -29,7 +29,7 @@ OWNER_ID = int(os.getenv("OWNER_ID", "0"))
 MONGO_URI = os.getenv("MONGO_URI", "")
 PORT = int(os.getenv("PORT", 8080))
 IST_TZ = ZoneInfo("Asia/Kolkata")
-START_MEDIA = "https://files.catbox.moe/35bl05.mp4" # Yahan apna video link daal sakte ho
+START_MEDIA = "https://files.catbox.moe/35bl05.mp4"
 
 # ═══════════════════════════════════════════════
 # DATABASE SETUP
@@ -61,7 +61,7 @@ async def init_mongo():
 bot: TelegramClient = None
 user_bots: dict[int, TelegramClient] = {}
 _TEMP_CLIENTS: dict[str, TelegramClient] = {}
-_login_steps: dict[int, str] = {} # State tracking: 'await_phone', 'await_otp', 'await_2fa'
+_login_steps: dict[int, str] = {} 
 PING_OFFSET = 0.090
 
 async def _safe_disconnect(cl):
@@ -182,9 +182,8 @@ def _parse_schedule_time(date_str: str, time_str: str):
     return dt_date.replace(hour=dt_time.hour, minute=dt_time.minute, second=dt_time.second, tzinfo=IST_TZ)
 
 # ═══════════════════════════════════════════════
-# BOT COMMANDS (LOGIN, START, HELP, ALIVE)
+# COMMAND FUNCTIONS (Bina Decorator ke)
 # ═══════════════════════════════════════════════
-@bot.on(events.NewMessage(pattern='/start'))
 async def start_cmd(event):
     uid = event.sender_id
     if await blocked_col.find_one({"owner_id": uid}): return
@@ -215,7 +214,6 @@ async def start_cmd(event):
     except:
         await event.reply(caption, parse_mode='markdown')
 
-@bot.on(events.NewMessage(pattern='/help'))
 async def help_cmd(event):
     text = (
         "🛑 **sᴄʜᴇᴅᴜʟᴇʀ ʙᴏᴛ ᴍᴇɴᴜ**\n"
@@ -237,25 +235,21 @@ async def help_cmd(event):
     )
     await event.reply(text, parse_mode="markdown")
 
-@bot.on(events.NewMessage(pattern='/login'))
 async def login_cmd(event):
     uid = event.sender_id
     if await blocked_col.find_one({"owner_id": uid}): return await event.reply("🚫 Aap block ho.")
-    
     u = await users_col.find_one({"owner_id": uid})
     if u and u.get("active"): return await event.reply("✅ Aap already logged in ho. Pehle `/logout` karo.")
     
     await event.reply("📱 **Phone number bhejo** (country code ke saath)\nExample: `+919876543210`")
     _login_steps[uid] = "await_phone"
 
-@bot.on(events.NewMessage(pattern='/logout'))
 async def logout_cmd(event):
     uid = event.sender_id
     await kill_userbot(uid, remove_session=True)
     _login_steps.pop(uid, None)
     await event.reply("✅ **Logged Out!**")
 
-@bot.on(events.NewMessage(pattern='/status'))
 async def status_cmd(event):
     uid = event.sender_id
     u = await users_col.find_one({"owner_id": uid, "active": True})
@@ -263,7 +257,6 @@ async def status_cmd(event):
     st = "🟢 Online" if user_bots.get(uid) else "🔴 Offline"
     await event.reply(f"👤 `{u.get('first_name', 'N/A')}`\n🆔 `{u.get('tg_id', 'N/A')}`\n⚡ Status: {st}")
 
-@bot.on(events.NewMessage(func=lambda e: e.is_private and not e.out and not (e.text or "").startswith('/')))
 async def login_flow(event):
     uid = event.sender_id
     step = _login_steps.get(uid)
@@ -333,10 +326,6 @@ async def finalize_login(uid, cli, event):
     
     await event.reply(f"🎉 **USERBOT ACTIVE!**\n👤 `{me.first_name}`\n🆔 `{me.id}`\n\nTest karne ke liye `.alive` bhejo.")
 
-# ═══════════════════════════════════════════════
-# SCHEDULER COMMANDS (Works from anywhere if userbot logged in)
-# ═══════════════════════════════════════════════
-@bot.on(events.NewMessage(pattern=r'^[./]schedule(?:\s|$)'))
 async def schedule_cmd(event):
     uid = event.sender_id
     cli = user_bots.get(uid)
@@ -378,7 +367,6 @@ async def schedule_cmd(event):
     asyncio.create_task(_scheduler_runner(cli, doc))
     await event.reply(f"✅ **SCHEDULED!**\n🆔 `{doc['_id'][:8]}`\n🕐 `{doc['scheduled_short']}`", parse_mode="markdown")
 
-@bot.on(events.NewMessage(pattern=r'^[./]schedulech(?:\s|$)'))
 async def schedulech_cmd(event):
     uid = event.sender_id
     cli = user_bots.get(uid)
@@ -421,7 +409,6 @@ async def schedulech_cmd(event):
     asyncio.create_task(_scheduler_runner(cli, doc))
     await event.reply(f"✅ **COMMENT SCHEDULED!**\n🆔 `{doc['_id'][:8]}`\n🕐 `{doc['scheduled_short']}`", parse_mode="markdown")
 
-@bot.on(events.NewMessage(pattern=r'^[./]schedules$'))
 async def schedules_cmd(event):
     cursor = sched_col.find({"owner_id": event.sender_id, "status": "pending"}).sort("scheduled_ts", 1)
     rows = await cursor.to_list(length=50)
@@ -430,12 +417,38 @@ async def schedules_cmd(event):
     for r in rows: text += f"`{r['_id'][:8]}` — {r['text'][:20]}... ({r['scheduled_short']})\n"
     await event.reply(text, parse_mode="markdown")
 
-@bot.on(events.NewMessage(pattern=r'^[./]alive$'))
+async def cancelschedule_cmd(event):
+    args = get_args(event.message).strip()
+    if not args: return await event.reply("`.cancelschedule <id>`")
+    prefix = args.split()[0]
+    m = await sched_col.find({"owner_id": event.sender_id, "status": "pending", "_id": {"$regex": f"^{re.escape(prefix)}"}}).to_list(length=5)
+    if not m: return await event.reply("❌ Not found.")
+    await sched_col.update_one({"_id": m[0]["_id"]}, {"$set": {"status": "cancelled"}})
+    await event.reply(f"✅ Cancelled `{m[0]['_id'][:8]}`")
+
 async def alive_cmd(event):
     if user_bots.get(event.sender_id):
         await event.reply("✨ **Bot is Alive & Kicking!** ✨\n⚡ Userbot is online.", parse_mode="markdown")
     else:
         await event.reply("⚠️ Bot is Alive, but userbot is offline. `/login` karein.")
+
+async def sync_cmd(event):
+    global PING_OFFSET
+    cli = user_bots.get(event.sender_id)
+    if not cli: return await event.reply("❌ Pehle `/login` karo.")
+    msg = await event.reply("🔄 **Syncing... Calculating network latency...**")
+    try:
+        times = []
+        for _ in range(5):
+            t0 = time.perf_counter()
+            await cli(PingRequest(ping_id=random.randint(1, 10**9)))
+            times.append(time.perf_counter() - t0)
+            await asyncio.sleep(0.1)
+        avg_ping = sum(times) / len(times)
+        PING_OFFSET = avg_ping + 0.005 
+        await msg.edit(f"✅ **Sync Complete!**\n📡 `{avg_ping * 1000:.1f} ms`\n⚙️ Offset: `{PING_OFFSET * 1000:.1f} ms`", parse_mode='markdown')
+    except Exception as e:
+        await msg.edit(f"❌ **Sync Failed:** `{str(e)[:200]}`")
 
 # ═══════════════════════════════════════════════
 # HEALTH & STARTUP
@@ -456,6 +469,23 @@ async def main():
     bot = TelegramClient("schedule_x_bot_bot", API_ID, API_HASH)
     await bot.start(bot_token=BOT_TOKEN)
     log.info("✅ Bot Online!")
+
+    # Register all commands inside main function to avoid 'NoneType' error
+    bot.add_event_handler(start_cmd, events.NewMessage(pattern=r"^[./]start$", func=lambda e: e.is_private and not e.out))
+    bot.add_event_handler(help_cmd, events.NewMessage(pattern=r"^[./]help$", func=lambda e: e.is_private and not e.out))
+    bot.add_event_handler(login_cmd, events.NewMessage(pattern=r"^[./]login$", func=lambda e: e.is_private and not e.out))
+    bot.add_event_handler(logout_cmd, events.NewMessage(pattern=r"^[./]logout$", func=lambda e: e.is_private and not e.out))
+    bot.add_event_handler(status_cmd, events.NewMessage(pattern=r"^[./]status$", func=lambda e: e.is_private and not e.out))
+    
+    bot.add_event_handler(login_flow, events.NewMessage(func=lambda e: e.is_private and not e.out and not (e.text or "").startswith('/')))
+    
+    # These work anywhere (chat/groups) as long as userbot is logged in
+    bot.add_event_handler(schedule_cmd, events.NewMessage(pattern=r"^[./]schedule(?:\s|$)"))
+    bot.add_event_handler(schedulech_cmd, events.NewMessage(pattern=r"^[./]schedulech(?:\s|$)"))
+    bot.add_event_handler(schedules_cmd, events.NewMessage(pattern=r"^[./]schedules$"))
+    bot.add_event_handler(cancelschedule_cmd, events.NewMessage(pattern=r"^[./]cancelschedule(?:\s|$)"))
+    bot.add_event_handler(alive_cmd, events.NewMessage(pattern=r"^[./]alive$"))
+    bot.add_event_handler(sync_cmd, events.NewMessage(pattern=r"^[./]sync$"))
 
     await restore_all_userbots()
     asyncio.create_task(health_server())
