@@ -7,8 +7,7 @@ from telethon.tl.custom import Button
 from telethon.tl.types import (
     KeyboardButtonWebView, 
     ReplyInlineMarkup, 
-    KeyboardButtonRow,
-    KeyboardButtonUrl
+    KeyboardButtonRow
 )
 from motor.motor_asyncio import AsyncIOMotorClient
 
@@ -22,7 +21,9 @@ MONGO_URI = os.environ.get("MONGO_URI", "")
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("Verifier")
 
+# ═══════════════ BOT SETUP ═══════════════
 bot = TelegramClient('verify_bot', API_ID, API_HASH)
+bot.parse_mode = "markdown"
 
 # ═══════════════ DATABASE SETUP ═══════════════
 db = None
@@ -126,8 +127,13 @@ async def start_h(event):
 # ═══════════════ RUNNER ═══════════════
 async def main():
     await init_db()
-    await bot.start(bot_token=BOT_TOKEN)
-    log.info("Bot started...")
+    
+    try:
+        await bot.start(bot_token=BOT_TOKEN)
+        log.info("Bot started successfully...")
+    except Exception as e:
+        log.error(f"❌ Bot start failed (Check API_ID/API_HASH/BOT_TOKEN): {e}")
+        return
     
     app = web.Application()
     app.router.add_get('/', handle_index)
