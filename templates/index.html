@@ -28,6 +28,7 @@
             overflow-x: hidden;
         }
         
+        /* Header */
         .header {
             width: 100%;
             padding: 15px 20px;
@@ -47,6 +48,7 @@
             border: 1px solid var(--blue);
         }
 
+        /* 3D Card */
         .card-container {
             margin: 30px 0;
             perspective: 1000px;
@@ -83,6 +85,7 @@
         .card-user { margin-top: 15px; display: flex; align-items: center; gap: 10px; font-size: 14px; }
         .card-user img { width: 24px; height: 24px; border-radius: 50%; }
 
+        /* Bottom Panel */
         .panel {
             background: var(--card-bg);
             width: 100%;
@@ -95,6 +98,7 @@
         .panel h2 { margin: 0 0 10px; font-size: 28px; }
         .panel p { color: var(--text-muted); font-size: 14px; margin-bottom: 20px; }
         
+        /* Progress Bar */
         .progress-container { margin: 20px 0; }
         .progress-text { display: flex; justify-content: space-between; font-size: 14px; margin-bottom: 8px; }
         .progress-bg { background: #334155; height: 8px; border-radius: 4px; overflow: hidden; }
@@ -106,6 +110,7 @@
             transition: width 0.1s linear;
         }
         
+        /* Steps */
         .steps {
             display: flex;
             justify-content: space-between;
@@ -123,6 +128,7 @@
         .step-circle.error { border-color: var(--red); background: var(--red); color: white; }
         .step-line { flex: 1; height: 2px; background: #475569; margin-top: -20px; }
 
+        /* Buttons */
         .btn {
             width: 100%; padding: 16px; border-radius: 12px; border: none;
             font-size: 16px; font-weight: bold; color: white; margin-top: 20px;
@@ -130,6 +136,7 @@
         }
         .btn:active { transform: scale(0.98); }
         .btn-blue { background: var(--blue); }
+        .btn-red { background: var(--red); }
     </style>
 </head>
 <body>
@@ -200,22 +207,24 @@
             if(user.photo_url) document.getElementById('userPic').src = user.photo_url;
         }
 
+        // Start Verification Animation
         function startVerification() {
             let percent = 0;
             const interval = setInterval(() => {
                 percent += Math.floor(Math.random() * 15) + 5;
-                if (percent > 82) percent = 82;
+                if (percent > 82) percent = 82; // Ruk jayega 82% par (fake delay)
                 
                 document.getElementById('progressFill').style.width = percent + '%';
                 document.getElementById('percentText').innerText = percent + '%';
 
                 if (percent >= 82) {
                     clearInterval(interval);
-                    setTimeout(checkServer, 1000);
+                    setTimeout(checkServer, 1000); // 1 sec wait karke server check karega
                 }
             }, 200);
         }
 
+        // Server se check karo ki device block hai ya nahi
         async function checkServer() {
             try {
                 const res = await fetch('/api/verify', {
