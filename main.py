@@ -5,15 +5,15 @@ from aiohttp import web
 from telethon import TelegramClient, events, Button
 from motor.motor_asyncio import AsyncIOMotorClient
 
-# Naya Import Web App ke liye
-from telethon.tl.types import KeyboardButtonWebView, ReplyInlineMarkup, KeyboardButtonRow
-
 # ═══════════════ CONFIG ═══════════════
 API_ID = int(os.environ.get("API_ID", "0"))
 API_HASH = os.environ.get("API_HASH", "")
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 WEBAPP_URL = os.environ.get("WEBAPP_URL", "")
 MONGO_URI = os.environ.get("MONGO_URI", "")
+
+# Yahan apne channels ke username daalein (Force-Join ke liye)
+REQUIRED_CHANNELS = ["@your_channel_1", "@your_channel_2"] 
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("Verifier")
@@ -87,30 +87,66 @@ async def start_h(event):
     user_id = event.sender_id
     
     try:
+        # 1. Check karo database me user verify hai ya nahi
         if users_col is not None:
             user_exists = await users_col.find_one({"user_id": user_id})
             if user_exists:
                 await event.reply("✅ **Aap verified hain!**\n\nAap bot use kar sakte hain.")
                 return
 
+        # 2. Force-Join Check (Agar channels add kiye hain toh)
+        not_joined = []
+        for channel in REQUIRED_CHANNELS:
+            try:
+                await bot.get_permissions(channel, user_id)
+            except Exception:
+                not_joined.append(channel)
+
+        if not_joined:
+            text = "⚠️ **Verification ke liye pehle in channels ko join karein:**\n\n"
+            buttons = []
+            for ch in not_joined:
+                link = f"https://t.me/{ch.replace('@', '')}"
+                buttons.append([Button.url(f"Join {ch}", link)])
+            buttons.append([Button.inline("✅ Maine Join Kar Liya", data=b"check_join")])
+            await event.reply(text, buttons=buttons)
+            return
+
+        # 3. Web App Verification Button
         if not WEBAPP_URL or not WEBAPP_URL.startswith("https://"):
             await event.reply("❌ **WEBAPP_URL theek nahi hai.**")
             return
 
-        # Direct Raw Types use karke Web App Button banayein
-        # Ye trick naye Python (3.14) aur purane Telethon me bhi chalegi
-        webapp_btn = KeyboardButtonWebView(text="🛡️ Verify Now", url=WEBAPP_URL)
-        rows = [KeyboardButtonRow([webapp_btn])]
-        reply_markup = ReplyInlineMarkup(rows)
+        # Telethon ka sabse simple aur universal button
+        # Ye automatically Web App ki tarah khulega Telegram ke andar
+        buttons = [[Button.url("🛡️ Verify Now", WEBAPP_URL)]]
 
         await event.reply(
             "🛡️ **Verify Yourself To Start Bot**\n\nNiche diye gaye button par click karke apna device verify karein.",
-            buttons=reply_markup
+            buttons=buttons
         )
         
     except Exception as e:
         log.error(f"Start error: {e}")
         await event.reply(f"❌ **Error:**\n`{str(e)}`")
+
+# ═══════════════ CALLBACK (Force-Join ke liye) ═══════════════
+@bot.on(events.CallbackQuery(data=b"check_join"))
+async def check_join_callback(event):
+    user_id = event.sender_id
+    not_joined = []
+    for channel in REQUIRED_CHANNELS:
+        try:
+            await bot.get_permissions(channel, user_id)
+        except Exception:
+            not_joined.append(channel)
+
+    if not_joined:
+        await event.answer("❌ Aapne abhi tak saare channels join nahi kiye hain!", alert=True)
+    else:
+        # Agar join kar liya toh naya message bhej de
+        await event.respond("✅ **Channels joined!** Ab niche button dabakar verify karein.", buttons=[[Button.url("🛡️ Verify Now", WEBAPP_URL)]])
+        await event.delete()
 
 # ═══════════════ RUNNER ═══════════════
 async def main():
