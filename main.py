@@ -45,7 +45,7 @@ async def handle_index(request):
         with open('templates/index.html', 'r', encoding='utf-8') as f:
             return web.Response(text=f.read(), content_type='text/html')
     except Exception as e:
-        return web.Response(text=f"Error loading UI: {e}", status=500)
+        return web.Response(text=f"Error loading UI: {e}. Check if templates/index.html exists.", status=500)
 
 async def handle_verify(request):
     try:
@@ -101,34 +101,16 @@ async def start_h(event):
 
         # URL check
         if not WEBAPP_URL or not WEBAPP_URL.startswith("https://"):
-            await event.reply(f"❌ **Configuration Error!**\n\nWEBAPP_URL theek nahi hai.")
+            await event.reply(f"❌ **Configuration Error!**\n\nWEBAPP_URL theek nahi hai. Render me check karein.")
             return
 
-        # WebApp Button ka sahi aur universal tarika
-        from telethon.tl.types import (
-            KeyboardButtonUrl, 
-            KeyboardButtonRow, 
-            ReplyInlineMarkup
-        )
-        
-        # Button me web_app property add karna zaroori hai Telegram webview ke liye
-        btn = KeyboardButtonUrl(text="🛡️ Verify Now", url=WEBAPP_URL)
-        
-        # Note: Telethon me direct webapp set karna thoda tricky hai, 
-        # par ye raw tarika naye versions me bhi chalega.
-        try:
-            from telethon.tl.types import KeyboardButtonWebView
-            btn = KeyboardButtonWebView(text="🛡️ Verify Now", url=WEBAPP_URL)
-        except ImportError:
-            # Agar purana version ho toh fallback
-            pass
-
-        rows = [KeyboardButtonRow([btn])]
-        reply_markup = ReplyInlineMarkup(rows)
+        # Web App Button (Telethon ka universal button)
+        # Telegram isko automatically Web App ki tarah handle karta hai agar URL valid ho
+        buttons = [[Button.url("🛡️ Verify Now", WEBAPP_URL)]]
 
         await event.reply(
             "🛡️ **Verify Yourself To Start Bot**\n\nNiche diye gaye button par click karke apna device verify karein.",
-            buttons=reply_markup
+            buttons=buttons
         )
         
     except Exception as e:
