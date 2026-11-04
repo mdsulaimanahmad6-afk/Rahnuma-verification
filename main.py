@@ -5,6 +5,9 @@ from aiohttp import web
 from telethon import TelegramClient, events, Button
 from motor.motor_asyncio import AsyncIOMotorClient
 
+# Naya Import Web App ke liye
+from telethon.tl.types import KeyboardButtonWebView, ReplyInlineMarkup, KeyboardButtonRow
+
 # ═══════════════ CONFIG ═══════════════
 API_ID = int(os.environ.get("API_ID", "0"))
 API_HASH = os.environ.get("API_HASH", "")
@@ -15,7 +18,6 @@ MONGO_URI = os.environ.get("MONGO_URI", "")
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("Verifier")
 
-# ═══════════════ BOT SETUP ═══════════════
 bot = TelegramClient('verify_bot', API_ID, API_HASH)
 bot.parse_mode = "markdown"
 
@@ -27,7 +29,7 @@ users_col = None
 async def init_db():
     global db, ip_col, users_col
     if not MONGO_URI:
-        log.warning("⚠️ MONGO_URI set nahi hai! Data save nahi hoga.")
+        log.warning("⚠️ MONGO_URI set nahi hai!")
         return
     try:
         client = AsyncIOMotorClient(MONGO_URI)
@@ -45,7 +47,7 @@ async def handle_index(request):
         with open('templates/index.html', 'r', encoding='utf-8') as f:
             return web.Response(text=f.read(), content_type='text/html')
     except Exception as e:
-        return web.Response(text=f"Error loading UI: {e}. Check if templates/index.html exists.", status=500)
+        return web.Response(text=f"Error loading UI: {e}", status=500)
 
 async def handle_verify(request):
     try:
@@ -58,8 +60,6 @@ async def handle_verify(request):
         if ',' in ip_address:
             ip_address = ip_address.split(',')[0].strip()
 
-        log.info(f"Checking User: {user_id} | IP: {ip_address}")
-
         if users_col is None:
             return web.json_response({"status": "error", "message": "Database error"})
 
@@ -70,7 +70,6 @@ async def handle_verify(request):
         ip_exists = await ip_col.find_one({"ip": ip_address})
         if ip_exists:
             if ip_exists['user_id'] != user_id:
-                log.warning(f"BLOCKED! IP {ip_address} already used by {ip_exists['user_id']}")
                 return web.json_response({"status": "error", "message": "Multiple accounts detected"})
 
         await users_col.insert_one({"user_id": user_id})
@@ -80,7 +79,6 @@ async def handle_verify(request):
         return web.json_response({"status": "success"})
         
     except Exception as e:
-        log.error(f"Verify Error: {e}")
         return web.json_response({"status": "error"})
 
 # ═══════════════ BOT HANDLERS ═══════════════
@@ -89,43 +87,39 @@ async def start_h(event):
     user_id = event.sender_id
     
     try:
-        # Check karo database me user verify hai ya nahi
         if users_col is not None:
             user_exists = await users_col.find_one({"user_id": user_id})
             if user_exists:
                 await event.reply("✅ **Aap verified hain!**\n\nAap bot use kar sakte hain.")
                 return
-        else:
-            await event.reply("⚠️ Database not connected. Try later.")
-            return
 
-        # URL check
         if not WEBAPP_URL or not WEBAPP_URL.startswith("https://"):
-            await event.reply(f"❌ **Configuration Error!**\n\nWEBAPP_URL theek nahi hai. Render me check karein.")
+            await event.reply("❌ **WEBAPP_URL theek nahi hai.**")
             return
 
-        # Web App Button (Telethon ka universal button)
-        # Telegram isko automatically Web App ki tarah handle karta hai agar URL valid ho
-        buttons = [[Button.url("🛡️ Verify Now", WEBAPP_URL)]]
+        # Direct Raw Types use karke Web App Button banayein
+        # Ye trick naye Python (3.14) aur purane Telethon me bhi chalegi
+        webapp_btn = KeyboardButtonWebView(text="🛡️ Verify Now", url=WEBAPP_URL)
+        rows = [KeyboardButtonRow([webapp_btn])]
+        reply_markup = ReplyInlineMarkup(rows)
 
         await event.reply(
             "🛡️ **Verify Yourself To Start Bot**\n\nNiche diye gaye button par click karke apna device verify karein.",
-            buttons=buttons
+            buttons=reply_markup
         )
         
     except Exception as e:
-        log.error(f"Start command error: {e}")
-        await event.reply(f"❌ **Telegram Error:**\n`{str(e)}`")
+        log.error(f"Start error: {e}")
+        await event.reply(f"❌ **Error:**\n`{str(e)}`")
 
 # ═══════════════ RUNNER ═══════════════
 async def main():
     await init_db()
-    
     try:
         await bot.start(bot_token=BOT_TOKEN)
-        log.info("Bot started successfully...")
+        log.info("Bot started...")
     except Exception as e:
-        log.error(f"❌ Bot start failed (Check API_ID/API_HASH/BOT_TOKEN): {e}")
+        log.error(f"❌ Bot start failed: {e}")
         return
     
     app = web.Application()
@@ -137,7 +131,6 @@ async def main():
     await runner.setup()
     site = web.TCPSite(runner, '0.0.0.0', port)
     await site.start()
-    log.info(f"Web running on port {port}")
     
     await asyncio.gather(
         bot.run_until_disconnected(),
