@@ -68,7 +68,7 @@ def parse_sched(date_str, time_str):
 
 
 # ═══════════════════════════════════════════════
-# COMMAND FUNCTIONS (Without Decorators)
+# COMMAND FUNCTIONS
 # ═══════════════════════════════════════════════
 async def login_cmd(event):
     args = get_args(event.message).strip()
@@ -143,6 +143,40 @@ async def schedule_cmd(event):
     asyncio.create_task(sched_runner(doc, client))
     await event.reply(f"✅ **SCHEDULED!**\n🆔 `{doc['_id'][:8]}`\n🕐 `{doc['scheduled_short']}`", parse_mode="markdown")
 
+async def schedulech_cmd(event):
+    if not await require_userbot(event): return
+    args = get_args(event.message).strip()
+    if not args: return await event.reply("`.schedulech <date> <time> <post_link> <msg>`")
+    parts = args.split()
+    if len(parts) < 3: return await event.reply("❌ Format galat.")
+    date_str, time_str = parts[0], parts[1]
+    consumed = 2
+    if len(parts) >= 3 and parts[2].upper() in ("AM", "PM"):
+        time_str += f" {parts[2].upper()}"; consumed = 3
+    rest = " ".join(parts[consumed:]).strip()
+    try: sched_ts = parse_sched(date_str, time_str).timestamp()
+    except Exception as e: return await event.reply(f"❌ {e}")
+    if sched_ts <= time.time(): return await event.reply("❌ Past time.")
+    
+    tp = rest.split(" ", 1); post_link = tp[0]; msg_text = tp[1].strip() if len(tp) > 1 else ""
+    if not msg_text: return await event.reply("❌ Comment text chahiye.")
+    m = re.match(r"^https?://t\.me/(?:c/)?([^/\s]+)/(\d+)", post_link)
+    if not m: return await event.reply("❌ Invalid post link.")
+    
+    ub = user_bots[event.sender_id]
+    chat_part = m.group(1); post_id = int(m.group(2))
+    try:
+        if chat_part.isdigit() or chat_part.startswith("-"):
+            cid = int(chat_part) if chat_part.startswith("-") else int("-100" + chat_part)
+            channel = await ub.get_entity(cid)
+        else: channel = await ub.get_entity(chat_part)
+    except Exception as e: return await event.reply(f"❌ Channel not found\n`{str(e)[:100]}`")
+    
+    doc = {"_id": str(ObjectId()), "owner_id": event.sender_id, "target_id": channel.id, "text": msg_text, "reply_to_msg_id": None, "comment_to": post_id, "scheduled_ts": sched_ts, "scheduled_str": fmt_ist_full(sched_ts), "scheduled_short": fmt_ist_12h(sched_ts), "chat_id": event.chat_id, "created_at": time.time(), "status": "pending", "post_link": post_link}
+    await sched_col.insert_one(doc)
+    asyncio.create_task(sched_runner(doc, client))
+    await event.reply(f"✅ **COMMENT SCHEDULED!**\n🆔 `{doc['_id'][:8]}`\n🕐 `{doc['scheduled_short']}`", parse_mode="markdown")
+
 async def schedules_cmd(event):
     cursor = sched_col.find({"owner_id": event.sender_id, "status": "pending"}).sort("scheduled_ts", 1)
     rows = await cursor.to_list(length=50)
@@ -177,6 +211,65 @@ async def sync_cmd(event):
     except Exception as e:
         await msg.edit(f"❌ {str(e)[:200]}")
 
+DEFAULT_CMTS = ["Wow, great update!", "Thank you so much sir!", "Finally!", "Amazing.", "First!", "Thanks for giveaway!", "Great work.", "Need this."]
+
+async def register_autocmt_handler(uid: int):
+    ub = user_bots.get(uid)
+    if not ub or getattr(ub, "_autocmt_registered", False): return
+    ub._autocmt_registered = True
+
+    @ub.on(events.NewMessage())
+    async def handler(event):
+        if not event.is_channel or event.out: return
+        try:
+            cid = str(event.chat_id)
+            s = await autocmt_col.find_one({"owner_id": uid, "chat_id": cid, "enabled": True})
+            if not s: return
+            txt = random.choice(s.get("replies") or DEFAULT_CMTS)
+            try: await event.reply(txt)
+            except Exception as e: log.warning(f"autocmt send {uid}: {e}")
+        except Exception as e: log.error(f"autocmt handler {uid}: {e}")
+
+async def autocmt_cmd(event):
+    if not await require_userbot(event): return
+    uid = event.sender_id
+    ub = user_bots[uid]
+    args = get_args(event.message).strip()
+
+    if not args: return await event.reply("`.autocmt on <link>`\n`.autocmt off <link>`\n`.autocmt list`")
+    parts = args.split()
+    action = parts[0].lower()
+
+    if action == "list":
+        cursor = autocmt_col.find({"owner_id": uid, "enabled": True})
+        rows = await cursor.to_list(length=50)
+        if not rows: return await event.reply("📭 None.")
+        out = f"⚙️ **Auto-Comment ({len(rows)})**\n\n"
+        for r in rows: out += f"📢 `{r['chat_id']}` — {' | '.join(r.get('replies') or ['default'])}\n"
+        return await event.reply(out, parse_mode="markdown")
+
+    if len(parts) < 2: return await event.reply("❌ Channel link do.")
+    channel_input = parts[1]
+    try:
+        if channel_input.startswith(("https://t.me/", "t.me/")):
+            un = channel_input.replace("https://t.me/", "").replace("t.me/", "").split("/")[0]
+            ent = await ub.get_entity(un)
+        else: ent = await ub.get_entity(int(channel_input))
+        cid = str(ent.id)
+    except Exception as e: return await event.reply(f"❌ Not found\n`{str(e)[:100]}`")
+
+    if action == "off":
+        await autocmt_col.update_one({"owner_id": uid, "chat_id": cid}, {"$set": {"enabled": False}}, upsert=True)
+        return await event.reply(f"✅ OFF `{cid}`")
+
+    if action == "on":
+        custom = []
+        if len(parts) > 2: custom = [x.strip() for x in " ".join(parts[2:]).split("|") if x.strip()]
+        await autocmt_col.update_one({"owner_id": uid, "chat_id": cid}, {"$set": {"enabled": True, "replies": custom}}, upsert=True)
+        await register_autocmt_handler(uid)
+        info = "default" if not custom else " | ".join(custom)
+        return await event.reply(f"✅ ON `{cid}`\n💬 `{info}`")
+
 
 # ═══════════════════════════════════════════════
 # HEALTH SERVER
@@ -194,7 +287,16 @@ async def health_server():
 # ═══════════════════════════════════════════════
 async def main():
     global client
-    await init_mongo()
+    
+    log.info("⏳ Connecting to MongoDB...")
+    try:
+        await init_mongo()
+        log.info("✅ MongoDB Connected!")
+    except Exception as e:
+        log.error(f"❌ Database connection failed! Error: {e}")
+        return 
+    
+    log.info("⏳ Starting Bot Client...")
     client = TelegramClient("schedule_x_bot_bot", API_ID, API_HASH)
     await client.start(bot_token=BOT_TOKEN)
     log.info("✅ Bot Online!")
@@ -206,9 +308,11 @@ async def main():
     client.add_event_handler(logout_cmd, events.NewMessage(pattern=r"^[./]logout(?:\s|$)", func=lambda e: e.is_private and not e.out))
     client.add_event_handler(mybots_cmd, events.NewMessage(pattern=r"^[./]mybots(?:\s|$)", func=lambda e: e.is_private and not e.out))
     client.add_event_handler(schedule_cmd, events.NewMessage(pattern=r"^[./]schedule(?:\s|$)", func=lambda e: e.is_private and not e.out))
+    client.add_event_handler(schedulech_cmd, events.NewMessage(pattern=r"^[./]schedulech(?:\s|$)", func=lambda e: e.is_private and not e.out))
     client.add_event_handler(schedules_cmd, events.NewMessage(pattern=r"^[./]schedules(?:\s|$)", func=lambda e: e.is_private and not e.out))
     client.add_event_handler(cancelschedule_cmd, events.NewMessage(pattern=r"^[./]cancelschedule(?:\s|$)", func=lambda e: e.is_private and not e.out))
     client.add_event_handler(sync_cmd, events.NewMessage(pattern=r"^[./]sync(?:\s|$)", func=lambda e: e.is_private and not e.out))
+    client.add_event_handler(autocmt_cmd, events.NewMessage(pattern=r"^[./]autocmt(?:\s|$)", func=lambda e: e.is_private and not e.out))
 
     # ── OWNER COMMANDS REGISTER ──
     client.add_event_handler(lambda e: admin.admin_cmd(e), events.NewMessage(pattern=r"^[./]admin$", func=lambda e: e.is_private and not e.out and e.sender_id == OWNER_ID))
