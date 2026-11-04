@@ -16,6 +16,8 @@ from telethon.errors import (
     PhoneNumberInvalidError, PasswordHashInvalidError, FloodWaitError
 )
 from telethon.tl.functions import PingRequest
+from telethon.tl.functions.channels import GetFullChannelRequest
+from telethon.tl.types import Channel
 from motor.motor_asyncio import AsyncIOMotorClient
 
 load_dotenv()
@@ -156,26 +158,33 @@ async def _scheduler_runner(cl: TelegramClient, doc: dict):
     except Exception as e: log.error(f"runner error: {e}")
 
 # ═══════════════════════════════════════════════
-# AUTO COMMENT SYSTEM
+# AUTO COMMENT SYSTEM (FIXED & SMART)
 # ═══════════════════════════════════════════════
-DEFAULT_AUTO_CMTS = ["Wow, great update!", "Thank you so much sir!", "Finally the wait is over!", "Yes, this is amazing."]
+DEFAULT_AUTO_CMTS = ["Wow, great update!", "Thank you so much sir!", "Finally the wait is over!", "Yes, this is amazing.", "Hii, first comment here!", "Thank you for the giveaway!", "Great work, keep it up.", "This is exactly what I needed."]
 
 async def register_autocmt_handler(uid: int):
     ub = user_bots.get(uid)
     if not ub or getattr(ub, "_autocmt_registered", False): return
     ub._autocmt_registered = True
 
-    @ub.on(events.NewMessage())
+    @ub.on(events.NewMessage(incoming=True))
     async def handler(event):
         if not event.is_channel or event.out: return
         try:
             cid = str(event.chat_id)
+            # Database check
             s = await autocmt_col.find_one({"owner_id": uid, "chat_id": cid, "enabled": True})
             if not s: return
+            
             txt = random.choice(s.get("replies") or DEFAULT_AUTO_CMTS)
-            try: await event.reply(txt)
-            except: pass
-        except: pass
+            
+            try:
+                # Direct comment approach
+                await ub.send_message(event.chat_id, txt, comment_to=event.message.id)
+                log.info(f"⚡ Auto-comment Success on {cid}")
+            except Exception as e:
+                log.warning(f"Auto-comment fail try 1: {e}")
+        except Exception as e: log.error(f"autocmt handler {uid}: {e}")
 
 # ═══════════════════════════════════════════════
 # HELPERS
