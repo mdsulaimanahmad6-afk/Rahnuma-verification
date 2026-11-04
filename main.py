@@ -17,7 +17,6 @@ from telethon.errors import (
 )
 from telethon.tl.functions import PingRequest
 from telethon.tl.functions.channels import GetFullChannelRequest
-from telethon.tl.types import Channel
 from motor.motor_asyncio import AsyncIOMotorClient
 
 load_dotenv()
@@ -158,9 +157,9 @@ async def _scheduler_runner(cl: TelegramClient, doc: dict):
     except Exception as e: log.error(f"runner error: {e}")
 
 # ═══════════════════════════════════════════════
-# AUTO COMMENT SYSTEM (FIXED & SMART)
+# AUTO COMMENT SYSTEM (ADVANCED FIX)
 # ═══════════════════════════════════════════════
-DEFAULT_AUTO_CMTS = ["Wow, great update!", "Thank you so much sir!", "Finally the wait is over!", "Yes, this is amazing.", "Hii, first comment here!", "Thank you for the giveaway!", "Great work, keep it up.", "This is exactly what I needed."]
+DEFAULT_AUTO_CMTS = ["Wow, great update!", "Thank you so much sir!", "Finally the wait is over!", "Yes, this is amazing.", "Great work!", "Need this."]
 
 async def register_autocmt_handler(uid: int):
     ub = user_bots.get(uid)
@@ -169,22 +168,42 @@ async def register_autocmt_handler(uid: int):
 
     @ub.on(events.NewMessage(incoming=True))
     async def handler(event):
-        if not event.is_channel or event.out: return
+        # Check if it's a channel post OR a message in a linked group
+        if not event.is_channel and not event.is_group: return
+        if event.out: return
+        
         try:
             cid = str(event.chat_id)
-            # Database check
+            
+            # 1. Check if the exact chat_id is in our DB
             s = await autocmt_col.find_one({"owner_id": uid, "chat_id": cid, "enabled": True})
+            
+            # 2. If not found, check if this message is from a linked channel (comments)
+            if not s and event.is_group:
+                try:
+                    # Agar group hai, toh check karo kya ye kisi channel se linked hai
+                    full_chat = await ub(GetFullChannelRequest(channel=event.chat_id))
+                    if full_chat.full_chat.linked_chat_id:
+                        linked_cid = str(full_chat.full_chat.linked_chat_id)
+                        s = await autocmt_col.find_one({"owner_id": uid, "chat_id": linked_cid, "enabled": True})
+                except: pass
+                
             if not s: return
             
+            # Agar message bot ne khud bheja hai, toh ignore karo
+            if event.sender_id == (await ub.get_me()).id: return
+
             txt = random.choice(s.get("replies") or DEFAULT_AUTO_CMTS)
             
-            try:
-                # Direct comment approach
+            # Comment logic
+            if event.is_channel:
                 await ub.send_message(event.chat_id, txt, comment_to=event.message.id)
-                log.info(f"⚡ Auto-comment Success on {cid}")
-            except Exception as e:
-                log.warning(f"Auto-comment fail try 1: {e}")
-        except Exception as e: log.error(f"autocmt handler {uid}: {e}")
+            else:
+                await event.reply(txt)
+                
+            log.info(f"⚡ Auto-comment Success on {cid}")
+        except Exception as e: 
+            log.error(f"autocmt handler {uid}: {e}")
 
 # ═══════════════════════════════════════════════
 # HELPERS
@@ -243,7 +262,6 @@ async def start_cmd(event):
     except: await event.reply(caption, parse_mode='markdown')
 
 async def help_cmd(event):
-    uid = event.sender_id
     text = (
         "🛑 **sᴄʜᴇᴅᴜʟᴇʀ ʙᴏᴛ ᴍᴇɴᴜ**\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
@@ -259,7 +277,7 @@ async def help_cmd(event):
         "📢 **ᴀᴜᴛᴏ-ᴄᴏᴍᴍᴇɴᴛ:**\n"
         "▸ `.autocmt on/off/list`\n"
     )
-    if uid == OWNER_ID:
+    if event.sender_id == OWNER_ID:
         text += (
             "\n👑 **ᴏᴡɴᴇʀ ᴄᴏᴍᴍᴀɴᴅs:**\n"
             "▸ `/users` — Total logins\n"
@@ -453,34 +471,50 @@ async def cancelschedule_cmd(event):
     except: pass
     await event.reply(f"✅ **Cancelled** `{doc['_id'][:8]}`")
 
+# ─────────────── AUTOCMT COMMAND (SMART) ───────────────
 async def autocmt_cmd(event):
     uid = event.sender_id
-    if not user_bots.get(uid): return await event.reply("❌ Pehle `/login` karo.")
+    ub = user_bots.get(uid)
+    if not ub: return await event.reply("❌ Pehle `/login` karo.")
     args = get_args(event.message).strip()
-    if not args: return await event.reply("**Format:** `.autocmt on/off/list <link>`")
+    if not args: return await event.reply("**Format:** `.autocmt on/off/list <link>`\n\nNote: Channel ya uske Discussion group ka link dein.")
     parts = args.split()
     action = parts[0].lower()
+    
     if action == 'list':
         cursor = autocmt_col.find({"owner_id": uid, "enabled": True})
         rows = await cursor.to_list(length=50)
         if not rows: return await event.reply("📭 Koi channel set nahi hai.")
         return await event.reply("\n".join([f"📢 `{r['chat_id']}`" for r in rows]))
+    
     if len(parts) < 2: return await event.reply("❌ Channel link do.")
+    
     channel_input = parts[1]
     try:
         un = channel_input.replace("https://t.me/", "").replace("t.me/", "").split("/")[0]
-        ent = await user_bots[uid].get_entity(un) if not un.isdigit() else await user_bots[uid].get_entity(int(channel_input))
-        cid = str(ent.id)
+        ent = await ub.get_entity(un) if not un.isdigit() else await ub.get_entity(int(channel_input))
+        
+        # 🔥 SMART LOGIC: Get Linked Discussion Group
+        target_cid = ent.id
+        if getattr(ent, 'broadcast', False):
+            try:
+                full = await ub(GetFullChannelRequest(channel=ent))
+                if full.full_chat.linked_chat_id:
+                    target_cid = full.full_chat.linked_chat_id
+            except: pass
+            
+        cid = str(target_cid)
     except Exception as e: return await event.reply(f"❌ Not found: `{str(e)[:100]}`")
     
     if action == 'off':
         await autocmt_col.update_one({"owner_id": uid, "chat_id": cid}, {"$set": {"enabled": False}}, upsert=True)
         return await event.reply(f"✅ **Auto-Comment OFF** `{cid}`")
+    
     if action == 'on':
         custom = [x.strip() for x in " ".join(parts[2:]).split("|") if x.strip()] if len(parts) > 2 else []
         await autocmt_col.update_one({"owner_id": uid, "chat_id": cid}, {"$set": {"enabled": True, "replies": custom}}, upsert=True)
         await register_autocmt_handler(uid)
-        return await event.reply(f"✅ **Auto-Comment ON** `{cid}`")
+        return await event.reply(f"✅ **Auto-Comment ON** `{cid}`\n💬 Target Discussion Group set.")
 
 async def alive_cmd(event):
     await event.reply("✨ **Bot is Alive!** ✨\n⚡ Status: " + ("Online" if user_bots.get(event.sender_id) else "Offline"))
