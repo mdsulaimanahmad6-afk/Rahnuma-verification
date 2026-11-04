@@ -2,7 +2,14 @@ import os
 import asyncio
 import logging
 from aiohttp import web
-from telethon import TelegramClient, events, Button
+from telethon import TelegramClient, events
+from telethon.tl.custom import Button
+from telethon.tl.types import (
+    KeyboardButtonWebView, 
+    ReplyInlineMarkup, 
+    KeyboardButtonRow,
+    KeyboardButtonUrl
+)
 from motor.motor_asyncio import AsyncIOMotorClient
 
 # ═══════════════ CONFIG ═══════════════
@@ -102,11 +109,14 @@ async def start_h(event):
             await event.reply(f"❌ **Configuration Error!**\n\nWEBAPP_URL theek nahi hai. Render me check karein.\nCurrent URL: `{WEBAPP_URL}`")
             return
 
-        # Button bhejo
-        buttons = [[Button.web_view("🛡️ Verify", WEBAPP_URL)]]
+        # Sahi Web App Button banayein
+        webapp_btn = KeyboardButtonWebView(text="🛡️ Verify Now", url=WEBAPP_URL)
+        rows = [KeyboardButtonRow([webapp_btn])]
+        reply_markup = ReplyInlineMarkup(rows)
+
         await event.reply(
-            "🛡️ **Verify Yourself To Start Bot**",
-            buttons=buttons
+            "🛡️ **Verify Yourself To Start Bot**\n\nNiche diye gaye button par click karke apna device verify karein.",
+            buttons=reply_markup
         )
         
     except Exception as e:
