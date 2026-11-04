@@ -5,12 +5,18 @@ from aiohttp import web
 from telethon import TelegramClient, events, Button
 from motor.motor_asyncio import AsyncIOMotorClient
 
+# Asli Web App Button ke liye import
+from telethon.tl.types import KeyboardButtonWebView, ReplyInlineMarkup, KeyboardButtonRow
+
 # ═══════════════ CONFIG ═══════════════
 API_ID = int(os.environ.get("API_ID", "0"))
 API_HASH = os.environ.get("API_HASH", "")
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 WEBAPP_URL = os.environ.get("WEBAPP_URL", "")
 MONGO_URI = os.environ.get("MONGO_URI", "")
+
+# Yahan apne channel ka username daalein (Dhyan rahe bot wahan Admin hona chahiye)
+REQUIRED_CHANNELS = ["@Rahnuma_e_Deen"] 
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("Verifier")
@@ -89,23 +95,67 @@ async def start_h(event):
             if user_exists:
                 await event.reply("✅ **Aap verified hain!**\n\nAap bot use kar sakte hain.")
                 return
+        else:
+            await event.reply("⚠️ Database not connected. Try later.")
+            return
 
+        # Force-Join Check
+        not_joined = []
+        for channel in REQUIRED_CHANNELS:
+            try:
+                await bot.get_permissions(channel, user_id)
+            except Exception:
+                not_joined.append(channel)
+
+        if not_joined:
+            text = "⚠️ **Verification ke liye pehle in channels ko join karein:**\n\n"
+            buttons = []
+            for ch in not_joined:
+                link = f"https://t.me/{ch.replace('@', '')}"
+                buttons.append([Button.url(f"Join {ch}", link)])
+            buttons.append([Button.inline("✅ Maine Join Kar Liya", data=b"check_join")])
+            await event.reply(text, buttons=buttons)
+            return
+
+        # ASLI WEB APP BUTTON (Telegram ke andar khulega)
         if not WEBAPP_URL or not WEBAPP_URL.startswith("https://"):
             await event.reply("❌ **WEBAPP_URL theek nahi hai.**")
             return
 
-        # ASLI WEB APP BUTTON (Telethon ke universal Button ke through)
-        # Ye automatically Web App ki tarah khulega Telegram ke andar
-        buttons = [[Button.url("🛡️ Verify Now", WEBAPP_URL)]]
+        webapp_btn = KeyboardButtonWebView(text="🛡️ Verify Now", url=WEBAPP_URL)
+        rows = [KeyboardButtonRow([webapp_btn])]
+        reply_markup = ReplyInlineMarkup(rows)
 
         await event.reply(
             "🛡️ **Verify Yourself To Start Bot**\n\nNiche diye gaye button par click karke apna device verify karein.",
-            buttons=buttons
+            buttons=reply_markup
         )
         
     except Exception as e:
         log.error(f"Start error: {e}")
         await event.reply(f"❌ **Error:**\n`{str(e)}`")
+
+# ═══════════════ CALLBACK (Force-Join ke liye) ═══════════════
+@bot.on(events.CallbackQuery(data=b"check_join"))
+async def check_join_callback(event):
+    user_id = event.sender_id
+    not_joined = []
+    for channel in REQUIRED_CHANNELS:
+        try:
+            await bot.get_permissions(channel, user_id)
+        except Exception:
+            not_joined.append(channel)
+
+    if not_joined:
+        await event.answer("❌ Aapne abhi tak saare channels join nahi kiye hain!", alert=True)
+    else:
+        # Agar join kar liya toh naya message bhej de Web App button ke saath
+        webapp_btn = KeyboardButtonWebView(text="🛡️ Verify Now", url=WEBAPP_URL)
+        rows = [KeyboardButtonRow([webapp_btn])]
+        reply_markup = ReplyInlineMarkup(rows)
+        
+        await event.respond("✅ **Channels joined!** Ab niche button dabakar verify karein.", buttons=reply_markup)
+        await event.delete()
 
 # ═══════════════ RUNNER ═══════════════
 async def main():
