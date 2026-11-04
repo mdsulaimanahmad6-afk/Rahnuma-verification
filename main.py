@@ -2,12 +2,7 @@ import os
 import asyncio
 import logging
 from aiohttp import web
-from telethon import TelegramClient, events
-from telethon.tl.types import (
-    ReplyInlineMarkup, 
-    KeyboardButtonRow, 
-    KeyboardButtonWebView
-)
+from telethon import TelegramClient, events, Button
 from motor.motor_asyncio import AsyncIOMotorClient
 
 # ═══════════════ CONFIG ═══════════════
@@ -50,7 +45,7 @@ async def handle_index(request):
         with open('templates/index.html', 'r', encoding='utf-8') as f:
             return web.Response(text=f.read(), content_type='text/html')
     except Exception as e:
-        return web.Response(text=f"Error loading UI: {e}. Check if templates/index.html exists.", status=500)
+        return web.Response(text=f"Error loading UI: {e}", status=500)
 
 async def handle_verify(request):
     try:
@@ -109,14 +104,12 @@ async def start_h(event):
             await event.reply(f"❌ **Configuration Error!**\n\nWEBAPP_URL theek nahi hai. Render me check karein.\nCurrent URL: `{WEBAPP_URL}`")
             return
 
-        # Sahi Web App Button (Raw Types)
-        webapp_btn = KeyboardButtonWebView(text="🛡️ Verify Now", url=WEBAPP_URL)
-        rows = [KeyboardButtonRow([webapp_btn])]
-        reply_markup = ReplyInlineMarkup(rows)
+        # Simple Button (Jo har Telethon version me chalta hai)
+        buttons = [[Button.url("🛡️ Verify Now", WEBAPP_URL)]]
 
         await event.reply(
             "🛡️ **Verify Yourself To Start Bot**\n\nNiche diye gaye button par click karke apna device verify karein.",
-            buttons=reply_markup
+            buttons=buttons
         )
         
     except Exception as e:
