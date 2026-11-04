@@ -1,4 +1,3 @@
-"""Owner-only admin commands."""
 import os
 import time
 import asyncio
@@ -6,7 +5,7 @@ import logging
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from telethon.tl.functions import PingRequest
-from db import users_col, sessions_col, sched_col, autocmt_col, blocked_col
+import db # <-- Yahan change kiya
 from userbot_manager import user_bots, spawn_userbot, kill_userbot
 
 log = logging.getLogger("admin")
@@ -30,33 +29,33 @@ def fmt_ago(ts):
 async def resolve_user(query: str):
     query = query.strip()
     if not query: return None
-    if query.startswith("+"): return await users_col.find_one({"phone": query})
-    if query.startswith("@"): return await users_col.find_one({"username": query[1:]})
+    if query.startswith("+"): return await db.users_col.find_one({"phone": query})
+    if query.startswith("@"): return await db.users_col.find_one({"username": query[1:]})
     if query.isdigit():
         n = int(query)
-        u = await users_col.find_one({"owner_id": n})
+        u = await db.users_col.find_one({"owner_id": n})
         if u: return u
-        return await users_col.find_one({"tg_id": n})
+        return await db.users_col.find_one({"tg_id": n})
     return None
 
 async def user_stats(uid):
     return {
-        "pending": await sched_col.count_documents({"owner_id": uid, "status": "pending"}),
-        "sent":    await sched_col.count_documents({"owner_id": uid, "status": "sent"}),
-        "failed":  await sched_col.count_documents({"owner_id": uid, "status": "failed"}),
-        "acmt":    await autocmt_col.count_documents({"owner_id": uid, "enabled": True}),
+        "pending": await db.sched_col.count_documents({"owner_id": uid, "status": "pending"}),
+        "sent":    await db.sched_col.count_documents({"owner_id": uid, "status": "sent"}),
+        "failed":  await db.sched_col.count_documents({"owner_id": uid, "status": "failed"}),
+        "acmt":    await db.autocmt_col.count_documents({"owner_id": uid, "enabled": True}),
     }
 
 async def admin_cmd(event):
     if not is_owner(event.sender_id): return await event.reply("❌ Sirf owner.")
-    total_users = await users_col.count_documents({"active": True})
+    total_users = await db.users_col.count_documents({"active": True})
     online = sum(1 for u in user_bots.values() if u.is_connected())
     text = f"👑 **OWNER DASHBOARD**\n{'═' * 25}\n\n👥 Users: `{total_users}` (online: `{online}`)\n\n`.users` `.userinfo <id>`\n`.blockuser <id> [reason]` `.unblockuser <id>`\n`.removeuser <id>`\n`.suspend <id>` `.resume <id>` `.forcekill <id>`\n`.blockedlist` `.broadcast <msg>` `.sysinfo`"
     await event.reply(text, parse_mode="markdown")
 
 async def users_cmd(event):
     if not is_owner(event.sender_id): return
-    cursor = users_col.find({"active": True}).sort("logged_in_at", -1)
+    cursor = db.users_col.find({"active": True}).sort("logged_in_at", -1)
     rows = await cursor.to_list(length=100)
     if not rows: return await event.reply("📭 Koi user login nahi.")
     text = f"👥 **ALL USERS ({len(rows)})**\n{'═' * 25}\n\n"
@@ -81,17 +80,17 @@ async def blockuser_cmd(event, args):
     uid = u["owner_id"]
     if uid == OWNER_ID: return await event.reply("❌ Owner ko block nahi kar sakte.")
     reason = parts[1] if len(parts) > 1 else "No reason"
-    await blocked_col.update_one({"owner_id": uid}, {"$set": {"owner_id": uid, "phone": u["phone"], "reason": reason, "blocked_at": time.time()}}, upsert=True)
+    await db.blocked_col.update_one({"owner_id": uid}, {"$set": {"owner_id": uid, "phone": u["phone"], "reason": reason, "blocked_at": time.time()}}, upsert=True)
     await kill_userbot(uid, remove_session=True)
-    await users_col.update_one({"owner_id": uid}, {"$set": {"active": False, "blocked": True}})
+    await db.users_col.update_one({"owner_id": uid}, {"$set": {"active": False, "blocked": True}})
     await event.reply(f"🚫 **BLOCKED** `{uid}`\nReason: {reason}")
 
 async def unblockuser_cmd(event, args):
     if not is_owner(event.sender_id): return
     u = await resolve_user(args.strip())
     if not u: return await event.reply("❌ User not found.")
-    await blocked_col.delete_one({"owner_id": u["owner_id"]})
-    await users_col.update_one({"owner_id": u["owner_id"]}, {"$set": {"blocked": False}})
+    await db.blocked_col.delete_one({"owner_id": u["owner_id"]})
+    await db.users_col.update_one({"owner_id": u["owner_id"]}, {"$set": {"blocked": False}})
     await event.reply(f"✅ **UNBLOCKED** `{u['owner_id']}`")
 
 async def removeuser_cmd(event, args):
@@ -107,14 +106,14 @@ async def suspend_cmd(event, args):
     if not u: return await event.reply("❌ User not found.")
     cl = user_bots.pop(u["owner_id"], None)
     if cl: await cl.disconnect()
-    await users_col.update_one({"owner_id": u["owner_id"]}, {"$set": {"suspended": True}})
+    await db.users_col.update_one({"owner_id": u["owner_id"]}, {"$set": {"suspended": True}})
     await event.reply(f"⏸️ **SUSPENDED** `{u['owner_id']}`")
 
 async def resume_cmd(event, args):
     if not is_owner(event.sender_id): return
     u = await resolve_user(args.strip())
     if not u: return await event.reply("❌ User not found.")
-    await users_col.update_one({"owner_id": u["owner_id"]}, {"$set": {"suspended": False}})
+    await db.users_col.update_one({"owner_id": u["owner_id"]}, {"$set": {"suspended": False}})
     if await spawn_userbot(u["owner_id"]): await event.reply(f"▶️ **RESUMED** `{u['owner_id']}`")
     else: await event.reply("⚠️ Spawn fail.")
 
@@ -129,7 +128,7 @@ async def forcekill_cmd(event, args):
 
 async def broadcast_cmd(event, args):
     if not is_owner(event.sender_id) or not args.strip(): return
-    cursor = users_col.find({"active": True})
+    cursor = db.users_col.find({"active": True})
     users = await cursor.to_list(length=1000)
     prog = await event.reply(f"📢 Broadcasting to {len(users)}...")
     ok = fail = 0
@@ -141,7 +140,7 @@ async def broadcast_cmd(event, args):
 
 async def blockedlist_cmd(event):
     if not is_owner(event.sender_id): return
-    cursor = blocked_col.find({})
+    cursor = db.blocked_col.find({})
     rows = await cursor.to_list(length=100)
     if not rows: return await event.reply("✅ No blocked users.")
     text = "🚫 **BLOCKED**\n\n"
