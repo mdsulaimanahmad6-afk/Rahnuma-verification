@@ -62,7 +62,7 @@ bot: TelegramClient = None
 user_bots: dict[int, TelegramClient] = {}
 _TEMP_CLIENTS: dict[str, TelegramClient] = {}
 _login_steps: dict[int, str] = {} 
-PING_OFFSET = 0.090
+PING_OFFSET = 0.090 # Offset changed back to .090
 
 async def _safe_disconnect(cl):
     try: await cl.disconnect()
@@ -182,7 +182,7 @@ def _parse_schedule_time(date_str: str, time_str: str):
     return dt_date.replace(hour=dt_time.hour, minute=dt_time.minute, second=dt_time.second, tzinfo=IST_TZ)
 
 # ═══════════════════════════════════════════════
-# COMMAND FUNCTIONS (Bina Decorator ke)
+# COMMAND FUNCTIONS
 # ═══════════════════════════════════════════════
 async def start_cmd(event):
     uid = event.sender_id
@@ -223,15 +223,15 @@ async def help_cmd(event):
         "▸ `/logout` — Userbot logout\n"
         "▸ `/status` — Check login status\n\n"
         "⏰ **sᴄʜᴇᴅᴜʟᴇʀ:**\n"
-        "▸ `.schedule` — Message schedule karein\n"
-        "▸ `.schedulech` — Channel post pe comment schedule karein\n"
+        "▸ `.scdl` — Message schedule karein\n"
+        "▸ `.scdlch` — Channel post pe comment schedule karein\n"
         "▸ `.schedules` — Pending list\n"
         "▸ `.cancelschedule` — Cancel karein\n"
         "▸ `.sync` — Precise timing sync\n\n"
         "⚙️ **ᴏᴛʜᴇʀs:**\n"
         "▸ `.alive` — Bot live status check\n\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        "💡 _Tip: `.schedule` kisi bhi chat me de sakte hain._"
+        "💡 _Tip: Commands kisi bhi chat me kaam karenge._"
     )
     await event.reply(text, parse_mode="markdown")
 
@@ -326,13 +326,14 @@ async def finalize_login(uid, cli, event):
     
     await event.reply(f"🎉 **USERBOT ACTIVE!**\n👤 `{me.first_name}`\n🆔 `{me.id}`\n\nTest karne ke liye `.alive` bhejo.")
 
+# ─────────────── SCHEDULE COMMAND (.scdl) ───────────────
 async def schedule_cmd(event):
     uid = event.sender_id
     cli = user_bots.get(uid)
     if not cli: return await event.reply("❌ Pehle `/login` karo.")
 
     args = get_args(event.message).strip()
-    if not args: return await event.reply("**Format:** `.schedule <date> <time> <target> <msg>`")
+    if not args: return await event.reply("**Format:** `.scdl <date> <time> <target> <msg>`")
     
     parts = args.split()
     date_str, time_str = parts[0], parts[1]
@@ -346,15 +347,17 @@ async def schedule_cmd(event):
         if sched_ts <= time.time(): raise Exception("Time past me hai.")
     except Exception as e: return await event.reply(f"❌ `{str(e)[:100]}`")
 
-    target_id, msg_text, reply_to = None, rest, None
+    target_id, msg_text, reply_to, tname = None, rest, None, "Unknown"
     if event.is_reply:
         rm = await event.get_reply_message(); target_id = rm.sender_id; reply_to = rm.id
         if not msg_text: msg_text = (rm.message or "").strip()
+        tname = getattr(rm.sender, 'first_name', 'Unknown')
     else:
         tp = rest.split(" ", 1); target_str = tp[0]; msg_text = tp[1].strip() if len(tp) > 1 else ""
         try:
             ent = await cli.get_entity(target_str) if target_str.startswith("@") else await cli.get_entity(int(target_str))
             target_id = ent.id
+            tname = getattr(ent, 'first_name', getattr(ent, 'title', str(target_id)))
         except Exception as e: return await event.reply(f"❌ Target not found: `{target_str}`")
 
     doc = {
@@ -365,15 +368,32 @@ async def schedule_cmd(event):
     }
     await sched_col.insert_one(doc)
     asyncio.create_task(_scheduler_runner(cli, doc))
-    await event.reply(f"✅ **SCHEDULED!**\n🆔 `{doc['_id'][:8]}`\n🕐 `{doc['scheduled_short']}`", parse_mode="markdown")
+    
+    eta = int(sched_ts - time.time()); h, rem = divmod(eta, 3600); m, s = divmod(rem, 60)
+    preview = msg_text[:80] + ("..." if len(msg_text) > 80 else "")
+    
+    confirm_msg = await event.reply(
+        f"✅ **SCHEDULED!**\n"
+        f"━━━━━━━━━━━━━━━━━━\n\n"
+        f"🆔 **ID:** `{doc['_id'][:8]}`\n"
+        f"🎯 **Target:** `{tname}` (`{target_id}`)\n"
+        f"🕐 **When:** `{doc['scheduled_short']}`\n"
+        f"📅 **Full:** `{doc['scheduled_str']}`\n"
+        f"⏳ **ETA:** `{h}h {m}m {s}s`\n"
+        f"📝 **Text:** {preview}\n\n"
+        f"Cancel: `.cancelschedule {doc['_id'][:8]}`",
+        parse_mode='markdown'
+    )
+    await sched_col.update_one({"_id": doc["_id"]}, {"$set": {"confirm_chat_id": confirm_msg.chat_id, "confirm_msg_id": confirm_msg.id}})
 
+# ─────────────── SCHEDULE CHANNEL COMMAND (.scdlch) ───────────────
 async def schedulech_cmd(event):
     uid = event.sender_id
     cli = user_bots.get(uid)
     if not cli: return await event.reply("❌ Pehle `/login` karo.")
 
     args = get_args(event.message).strip()
-    if not args: return await event.reply("**Format:** `.schedulech <date> <time> <post_link> <msg>`")
+    if not args: return await event.reply("**Format:** `.scdlch <date> <time> <post_link> <msg>`")
     
     parts = args.split()
     date_str, time_str = parts[0], parts[1]
@@ -397,6 +417,7 @@ async def schedulech_cmd(event):
             channel_id = int(chat_part) if chat_part.startswith('-') else int("-100" + chat_part)
             channel = await cli.get_entity(channel_id)
         else: channel = await cli.get_entity(chat_part)
+        cname = getattr(channel, 'title', chat_part)
     except Exception as e: return await event.reply(f"❌ Channel not found: `{str(e)[:100]}`")
 
     doc = {
@@ -407,7 +428,24 @@ async def schedulech_cmd(event):
     }
     await sched_col.insert_one(doc)
     asyncio.create_task(_scheduler_runner(cli, doc))
-    await event.reply(f"✅ **COMMENT SCHEDULED!**\n🆔 `{doc['_id'][:8]}`\n🕐 `{doc['scheduled_short']}`", parse_mode="markdown")
+    
+    eta = int(sched_ts - time.time()); h, rem = divmod(eta, 3600); m2, s = divmod(rem, 60)
+    preview = msg_text[:80] + ("..." if len(msg_text) > 80 else "")
+
+    confirm_msg = await event.reply(
+        f"✅ **CHANNEL COMMENT SCHEDULED!**\n"
+        f"━━━━━━━━━━━━━━━━━━\n\n"
+        f"🆔 **ID:** `{doc['_id'][:8]}`\n"
+        f"📢 **Channel:** `{cname}`\n"
+        f"🔗 **Post:** `{post_link}`\n"
+        f"🕐 **When:** `{doc['scheduled_short']}`\n"
+        f"📅 **Full:** `{doc['scheduled_str']}`\n"
+        f"⏳ **ETA:** `{h}h {m2}m {s}s`\n"
+        f"📝 **Comment:** {preview}\n\n"
+        f"Cancel: `.cancelschedule {doc['_id'][:8]}`",
+        parse_mode='markdown'
+    )
+    await sched_col.update_one({"_id": doc["_id"]}, {"$set": {"confirm_chat_id": confirm_msg.chat_id, "confirm_msg_id": confirm_msg.id}})
 
 async def schedules_cmd(event):
     cursor = sched_col.find({"owner_id": event.sender_id, "status": "pending"}).sort("scheduled_ts", 1)
@@ -423,8 +461,15 @@ async def cancelschedule_cmd(event):
     prefix = args.split()[0]
     m = await sched_col.find({"owner_id": event.sender_id, "status": "pending", "_id": {"$regex": f"^{re.escape(prefix)}"}}).to_list(length=5)
     if not m: return await event.reply("❌ Not found.")
-    await sched_col.update_one({"_id": m[0]["_id"]}, {"$set": {"status": "cancelled"}})
-    await event.reply(f"✅ Cancelled `{m[0]['_id'][:8]}`")
+    if len(m) > 1: return await event.reply("⚠️ Multiple matches. Longer prefix do.")
+    
+    doc = m[0]
+    await sched_col.update_one({"_id": doc["_id"]}, {"$set": {"status": "cancelled"}})
+    try:
+        if doc.get("confirm_chat_id") and doc.get("confirm_msg_id"):
+            await bot.delete_messages(int(doc["confirm_chat_id"]), [int(doc["confirm_msg_id"])])
+    except: pass
+    await event.reply(f"✅ **Cancelled** `{doc['_id'][:8]}`\n📝 {doc['text'][:60]}")
 
 async def alive_cmd(event):
     if user_bots.get(event.sender_id):
@@ -470,18 +515,17 @@ async def main():
     await bot.start(bot_token=BOT_TOKEN)
     log.info("✅ Bot Online!")
 
-    # Register all commands inside main function to avoid 'NoneType' error
+    # ── BOT DM COMMANDS ──
     bot.add_event_handler(start_cmd, events.NewMessage(pattern=r"^[./]start$", func=lambda e: e.is_private and not e.out))
     bot.add_event_handler(help_cmd, events.NewMessage(pattern=r"^[./]help$", func=lambda e: e.is_private and not e.out))
     bot.add_event_handler(login_cmd, events.NewMessage(pattern=r"^[./]login$", func=lambda e: e.is_private and not e.out))
     bot.add_event_handler(logout_cmd, events.NewMessage(pattern=r"^[./]logout$", func=lambda e: e.is_private and not e.out))
     bot.add_event_handler(status_cmd, events.NewMessage(pattern=r"^[./]status$", func=lambda e: e.is_private and not e.out))
-    
     bot.add_event_handler(login_flow, events.NewMessage(func=lambda e: e.is_private and not e.out and not (e.text or "").startswith('/')))
     
-    # These work anywhere (chat/groups) as long as userbot is logged in
-    bot.add_event_handler(schedule_cmd, events.NewMessage(pattern=r"^[./]schedule(?:\s|$)"))
-    bot.add_event_handler(schedulech_cmd, events.NewMessage(pattern=r"^[./]schedulech(?:\s|$)"))
+    # ── GLOBAL COMMANDS (Kisi bhi chat me chalenge) ──
+    bot.add_event_handler(schedule_cmd, events.NewMessage(pattern=r"^[./]scdl(?:\s|$)"))
+    bot.add_event_handler(schedulech_cmd, events.NewMessage(pattern=r"^[./]scdlch(?:\s|$)"))
     bot.add_event_handler(schedules_cmd, events.NewMessage(pattern=r"^[./]schedules$"))
     bot.add_event_handler(cancelschedule_cmd, events.NewMessage(pattern=r"^[./]cancelschedule(?:\s|$)"))
     bot.add_event_handler(alive_cmd, events.NewMessage(pattern=r"^[./]alive$"))
