@@ -62,7 +62,7 @@ bot: TelegramClient = None
 user_bots: dict[int, TelegramClient] = {}
 _TEMP_CLIENTS: dict[str, TelegramClient] = {}
 _login_steps: dict[int, str] = {} 
-PING_OFFSET = 0.089
+PING_OFFSET = 0.088
 
 async def _safe_disconnect(cl):
     try: await cl.disconnect()
