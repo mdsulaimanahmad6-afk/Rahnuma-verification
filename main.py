@@ -38,22 +38,25 @@ db_client = None
 users_col = None
 sessions_col = None
 sched_col = None
+autocmt_col = None
 pending_col = None
 blocked_col = None
 
 async def init_mongo():
-    global db_client, users_col, sessions_col, sched_col, pending_col, blocked_col
+    global db_client, users_col, sessions_col, sched_col, autocmt_col, pending_col, blocked_col
     db_client = AsyncIOMotorClient(MONGO_URI)
     db = db_client["schedule_x_bot"]
     users_col = db["users"]
     sessions_col = db["sessions"]
     sched_col = db["schedules"]
+    autocmt_col = db["auto_comment"]
     pending_col = db["pending_logins"]
     blocked_col = db["blocked"]
     
     await users_col.create_index("owner_id", unique=True)
     await sessions_col.create_index("owner_id", unique=True)
     await sched_col.create_index([("owner_id", 1), ("status", 1)])
+    await autocmt_col.create_index([("owner_id", 1), ("chat_id", 1)], unique=True)
 
 # ═══════════════════════════════════════════════
 # GLOBALS & USERBOT MANAGER
@@ -62,7 +65,7 @@ bot: TelegramClient = None
 user_bots: dict[int, TelegramClient] = {}
 _TEMP_CLIENTS: dict[str, TelegramClient] = {}
 _login_steps: dict[int, str] = {} 
-PING_OFFSET = 0.089 # Offset changed back to .090
+PING_OFFSET = 0.089
 
 async def _safe_disconnect(cl):
     try: await cl.disconnect()
@@ -82,6 +85,7 @@ async def spawn_userbot(owner_id: int) -> TelegramClient | None:
             await _safe_disconnect(cl)
             return None
         user_bots[owner_id] = cl
+        await register_autocmt_handler(owner_id)
         return cl
     except: return None
 
@@ -136,13 +140,11 @@ async def _scheduler_runner(cl: TelegramClient, doc: dict):
                 else: await cl.send_message(target, send_text)
                 
                 await sched_col.update_one({"_id": doc["_id"]}, {"$set": {"status": "sent", "sent_at": time.time()}})
-                log.info(f"⚡ Scheduled {doc['_id'][:8]} SENT")
                 
                 if fresh.get("confirm_chat_id") and fresh.get("confirm_msg_id"):
                     try: await bot.delete_messages(int(fresh["confirm_chat_id"]), [int(fresh["confirm_msg_id"])])
                     except: pass
             except Exception as e:
-                log.error(f"⏰ Send failed: {e}")
                 await sched_col.update_one({"_id": doc["_id"]}, {"$set": {"status": "failed", "error": str(e)[:200]}})
 
         while True:
@@ -152,6 +154,28 @@ async def _scheduler_runner(cl: TelegramClient, doc: dict):
             else: await asyncio.sleep(0)
         asyncio.create_task(_real_send())
     except Exception as e: log.error(f"runner error: {e}")
+
+# ═══════════════════════════════════════════════
+# AUTO COMMENT SYSTEM
+# ═══════════════════════════════════════════════
+DEFAULT_AUTO_CMTS = ["Wow, great update!", "Thank you so much sir!", "Finally the wait is over!", "Yes, this is amazing."]
+
+async def register_autocmt_handler(uid: int):
+    ub = user_bots.get(uid)
+    if not ub or getattr(ub, "_autocmt_registered", False): return
+    ub._autocmt_registered = True
+
+    @ub.on(events.NewMessage())
+    async def handler(event):
+        if not event.is_channel or event.out: return
+        try:
+            cid = str(event.chat_id)
+            s = await autocmt_col.find_one({"owner_id": uid, "chat_id": cid, "enabled": True})
+            if not s: return
+            txt = random.choice(s.get("replies") or DEFAULT_AUTO_CMTS)
+            try: await event.reply(txt)
+            except: pass
+        except: pass
 
 # ═══════════════════════════════════════════════
 # HELPERS
@@ -182,13 +206,11 @@ def _parse_schedule_time(date_str: str, time_str: str):
     return dt_date.replace(hour=dt_time.hour, minute=dt_time.minute, second=dt_time.second, tzinfo=IST_TZ)
 
 # ═══════════════════════════════════════════════
-# COMMAND FUNCTIONS
+# USER COMMANDS
 # ═══════════════════════════════════════════════
 async def start_cmd(event):
     uid = event.sender_id
-    if await blocked_col.find_one({"owner_id": uid}): return
     u = await users_col.find_one({"owner_id": uid})
-    
     if u and u.get("active"):
         caption = ("✅ **ᴜꜱᴇʀʙᴏᴛ ᴀʟʀᴇᴀᴅʏ ʟᴏɢɢᴇᴅ ɪɴ!**\n"
                    "━━━━━━━━━━━━━━━━━━━━\n\n"
@@ -203,18 +225,16 @@ async def start_cmd(event):
                    "━━━━━━━━━━━━━━━━━━━━\n\n"
                    "🛑 ʟᴏɢɪɴ sᴛᴇᴘs:\n\n"
                    "🔷  sᴇɴᴅ /ʟᴏɢɪɴ\n\n"
-                   "🔷  sᴇɴᴅ ᴘʜᴏɴᴇ ɴᴜᴍʙᴇʀ (ᴡɪᴛʜ ᴄᴏᴜɴᴛʀʏ ᴄᴏᴅᴇ, ᴇ.ɢ. +𝟿𝟷𝟿𝟾𝟽𝟼𝟻𝟺𝟹𝟸𝟷𝟶)\n\n"
-                   "🔷  sᴇɴᴅ ᴏᴛᴘ (sᴘᴀᴄᴇ ᴋᴇ sᴀᴀᴛʜ ʏᴀ ʙɪɴᴀ)\n\n"
+                   "🔷  sᴇɴᴅ ᴘʜᴏɴᴇ ɴᴜᴍʙᴇʀ (ᴡɪᴛʜ ᴄᴏᴜɴᴛʀʏ ᴄᴏᴅᴇ)\n\n"
+                   "🔷  sᴇɴᴅ ᴏᴛᴘ\n\n"
                    "🔷  sᴇɴᴅ 𝟸ꜰᴀ ᴘᴀssᴡᴏʀᴅ (ɪꜰ ᴇɴᴀʙʟᴇᴅ)\n\n"
                    "━━━━━━━━━━━━━━━━━━━━\n"
                    "🔐 ʟᴏɢɪɴ? ᴛᴏʜ: /ʟᴏɢɪɴ")
-    
-    try:
-        await bot.send_file(event.chat_id, START_MEDIA, caption=caption, parse_mode='markdown', supports_streaming=True)
-    except:
-        await event.reply(caption, parse_mode='markdown')
+    try: await bot.send_file(event.chat_id, START_MEDIA, caption=caption, parse_mode='markdown')
+    except: await event.reply(caption, parse_mode='markdown')
 
 async def help_cmd(event):
+    uid = event.sender_id
     text = (
         "🛑 **sᴄʜᴇᴅᴜʟᴇʀ ʙᴏᴛ ᴍᴇɴᴜ**\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
@@ -226,13 +246,20 @@ async def help_cmd(event):
         "▸ `.scdl` — Message schedule karein\n"
         "▸ `.scdlch` — Channel post pe comment schedule karein\n"
         "▸ `.schedules` — Pending list\n"
-        "▸ `.cancelschedule` — Cancel karein\n"
-        "▸ `.sync` — Precise timing sync\n\n"
-        "⚙️ **ᴏᴛʜᴇʀs:**\n"
-        "▸ `.alive` — Bot live status check\n\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        "💡 _Tip: Commands kisi bhi chat me kaam karenge._"
+        "▸ `.cancelschedule` — Cancel karein\n\n"
+        "📢 **ᴀᴜᴛᴏ-ᴄᴏᴍᴍᴇɴᴛ:**\n"
+        "▸ `.autocmt on/off/list`\n"
     )
+    if uid == OWNER_ID:
+        text += (
+            "\n👑 **ᴏᴡɴᴇʀ ᴄᴏᴍᴍᴀɴᴅs:**\n"
+            "▸ `/users` — Total logins\n"
+            "▸ `/remove <id>` — Remove user\n"
+            "▸ `/block <id>` — Block user\n"
+            "▸ `/unblock <id>` — Unblock user\n"
+            "▸ `/broadcast <msg>` — Send to all\n"
+            "▸ `/stats` — Bot stats\n"
+        )
     await event.reply(text, parse_mode="markdown")
 
 async def login_cmd(event):
@@ -240,21 +267,18 @@ async def login_cmd(event):
     if await blocked_col.find_one({"owner_id": uid}): return await event.reply("🚫 Aap block ho.")
     u = await users_col.find_one({"owner_id": uid})
     if u and u.get("active"): return await event.reply("✅ Aap already logged in ho. Pehle `/logout` karo.")
-    
     await event.reply("📱 **Phone number bhejo** (country code ke saath)\nExample: `+919876543210`")
     _login_steps[uid] = "await_phone"
 
 async def logout_cmd(event):
-    uid = event.sender_id
-    await kill_userbot(uid, remove_session=True)
-    _login_steps.pop(uid, None)
+    await kill_userbot(event.sender_id, remove_session=True)
+    _login_steps.pop(event.sender_id, None)
     await event.reply("✅ **Logged Out!**")
 
 async def status_cmd(event):
-    uid = event.sender_id
-    u = await users_col.find_one({"owner_id": uid, "active": True})
+    u = await users_col.find_one({"owner_id": event.sender_id, "active": True})
     if not u: return await event.reply("❌ Login nahi ho. `/login`")
-    st = "🟢 Online" if user_bots.get(uid) else "🔴 Offline"
+    st = "🟢 Online" if user_bots.get(event.sender_id) else "🔴 Offline"
     await event.reply(f"👤 `{u.get('first_name', 'N/A')}`\n🆔 `{u.get('tg_id', 'N/A')}`\n⚡ Status: {st}")
 
 async def login_flow(event):
@@ -272,11 +296,7 @@ async def login_flow(event):
             await cli.connect()
             sent = await cli.send_code_request(text)
             _TEMP_CLIENTS[uid] = cli
-            
-            await pending_col.update_one({"owner_id": uid}, {"$set": {
-                "phone": text, "phone_code_hash": sent.phone_code_hash, "created_at": time.time()
-            }}, upsert=True)
-            
+            await pending_col.update_one({"owner_id": uid}, {"$set": {"phone": text, "phone_code_hash": sent.phone_code_hash, "created_at": time.time()}}, upsert=True)
             _login_steps[uid] = "await_otp"
             await event.reply("📨 **OTP BHEJA GAYA!**\n\nExample: `1 2 3 4 5`")
         except Exception as e:
@@ -288,7 +308,6 @@ async def login_flow(event):
         cli = _TEMP_CLIENTS.get(uid)
         p_data = await pending_col.find_one({"owner_id": uid})
         if not cli or not p_data: return await event.reply("❌ Session expire. `/login`")
-        
         try:
             await cli.sign_in(phone=p_data["phone"], code=otp, phone_code_hash=p_data["phone_code_hash"])
             await finalize_login(uid, cli, event)
@@ -310,38 +329,37 @@ async def login_flow(event):
 async def finalize_login(uid, cli, event):
     me = await cli.get_me()
     sess_str = cli.session.save()
+    now_str = datetime.now(IST_TZ).strftime("%d %b %Y, %I:%M %p")
     
-    await users_col.update_one({"owner_id": uid}, {"$set": {
-        "owner_id": uid, "phone": me.phone, "tg_id": me.id, 
-        "first_name": me.first_name, "active": True, "logged_in_at": time.time()
-    }}, upsert=True)
-    await sessions_col.update_one({"owner_id": uid}, {"$set": {
-        "owner_id": uid, "session_str": sess_str
-    }}, upsert=True)
+    await users_col.update_one({"owner_id": uid}, {"$set": {"owner_id": uid, "phone": me.phone, "tg_id": me.id, "first_name": me.first_name, "active": True, "logged_in_at": time.time()}}, upsert=True)
+    await sessions_col.update_one({"owner_id": uid}, {"$set": {"owner_id": uid, "session_str": sess_str}}, upsert=True)
     
     _login_steps.pop(uid, None)
     _TEMP_CLIENTS.pop(uid, None)
     await pending_col.delete_one({"owner_id": uid})
     await spawn_userbot(uid)
     
+    # Notify User
     await event.reply(f"🎉 **USERBOT ACTIVE!**\n👤 `{me.first_name}`\n🆔 `{me.id}`\n\nTest karne ke liye `.alive` bhejo.")
+    
+    # Notify Owner
+    try:
+        owner_msg = f"🔔 **New Login**\n👤 `{me.first_name}`\n🆔 `{me.id}`\n📛 @{me.username or 'None'}\n🕐 `{now_str}`"
+        await bot.send_message(OWNER_ID, owner_msg, parse_mode='markdown')
+    except: pass
 
-# ─────────────── SCHEDULE COMMAND (.scdl) ───────────────
+# ─────────────── SCHEDULE COMMANDS ───────────────
 async def schedule_cmd(event):
-    uid = event.sender_id
-    cli = user_bots.get(uid)
+    cli = user_bots.get(event.sender_id)
     if not cli: return await event.reply("❌ Pehle `/login` karo.")
-
     args = get_args(event.message).strip()
     if not args: return await event.reply("**Format:** `.scdl <date> <time> <target> <msg>`")
-    
     parts = args.split()
     date_str, time_str = parts[0], parts[1]
     consumed = 2
     if len(parts) >= 3 and parts[2].upper() in ("AM", "PM"):
         time_str += f" {parts[2].upper()}"; consumed = 3
     rest = " ".join(parts[consumed:]).strip()
-
     try:
         sched_ts = _parse_schedule_time(date_str, time_str).timestamp()
         if sched_ts <= time.time(): raise Exception("Time past me hai.")
@@ -360,48 +378,26 @@ async def schedule_cmd(event):
             tname = getattr(ent, 'first_name', getattr(ent, 'title', str(target_id)))
         except Exception as e: return await event.reply(f"❌ Target not found: `{target_str}`")
 
-    doc = {
-        "_id": str(ObjectId()), "owner_id": uid, "target_id": target_id, "text": msg_text,
-        "reply_to_msg_id": reply_to, "comment_to": None, "scheduled_ts": sched_ts,
-        "scheduled_short": _fmt_ist_12h(sched_ts), "scheduled_str": _fmt_ist_full(sched_ts),
-        "status": "pending", "created_at": time.time()
-    }
+    doc = {"_id": str(ObjectId()), "owner_id": event.sender_id, "target_id": target_id, "text": msg_text, "reply_to_msg_id": reply_to, "comment_to": None, "scheduled_ts": sched_ts, "scheduled_short": _fmt_ist_12h(sched_ts), "scheduled_str": _fmt_ist_full(sched_ts), "status": "pending", "created_at": time.time()}
     await sched_col.insert_one(doc)
     asyncio.create_task(_scheduler_runner(cli, doc))
     
     eta = int(sched_ts - time.time()); h, rem = divmod(eta, 3600); m, s = divmod(rem, 60)
     preview = msg_text[:80] + ("..." if len(msg_text) > 80 else "")
-    
-    confirm_msg = await event.reply(
-        f"✅ **SCHEDULED!**\n"
-        f"━━━━━━━━━━━━━━━━━━\n\n"
-        f"🆔 **ID:** `{doc['_id'][:8]}`\n"
-        f"🎯 **Target:** `{tname}` (`{target_id}`)\n"
-        f"🕐 **When:** `{doc['scheduled_short']}`\n"
-        f"📅 **Full:** `{doc['scheduled_str']}`\n"
-        f"⏳ **ETA:** `{h}h {m}m {s}s`\n"
-        f"📝 **Text:** {preview}\n\n"
-        f"Cancel: `.cancelschedule {doc['_id'][:8]}`",
-        parse_mode='markdown'
-    )
+    confirm_msg = await event.reply(f"✅ **SCHEDULED!**\n🆔 `{doc['_id'][:8]}`\n🎯 `{tname}`\n🕐 `{doc['scheduled_short']}`\n⏳ `{h}h {m}m {s}s`\n📝 {preview}", parse_mode='markdown')
     await sched_col.update_one({"_id": doc["_id"]}, {"$set": {"confirm_chat_id": confirm_msg.chat_id, "confirm_msg_id": confirm_msg.id}})
 
-# ─────────────── SCHEDULE CHANNEL COMMAND (.scdlch) ───────────────
 async def schedulech_cmd(event):
-    uid = event.sender_id
-    cli = user_bots.get(uid)
+    cli = user_bots.get(event.sender_id)
     if not cli: return await event.reply("❌ Pehle `/login` karo.")
-
     args = get_args(event.message).strip()
-    if not args: return await event.reply("**Format:** `.scdlch <date> <time> <post_link> <msg>`")
-    
+    if not args: return await event.reply("**Format:** `.scdlch <date> <time> <link> <msg>`")
     parts = args.split()
     date_str, time_str = parts[0], parts[1]
     consumed = 2
     if len(parts) >= 3 and parts[2].upper() in ("AM", "PM"):
         time_str += f" {parts[2].upper()}"; consumed = 3
     rest = " ".join(parts[consumed:]).strip()
-
     try:
         sched_ts = _parse_schedule_time(date_str, time_str).timestamp()
         if sched_ts <= time.time(): raise Exception("Time past me hai.")
@@ -410,41 +406,20 @@ async def schedulech_cmd(event):
     tp = rest.split(" ", 1); post_link = tp[0]; msg_text = tp[1].strip() if len(tp) > 1 else ""
     m = re.match(r'^https?://t\.me/(?:c/)?([^/\s]+)/(\d+)', post_link)
     if not m: return await event.reply("❌ Invalid post link.")
-
     chat_part = m.group(1); post_id = int(m.group(2))
     try:
-        if chat_part.isdigit() or chat_part.startswith('-'):
-            channel_id = int(chat_part) if chat_part.startswith('-') else int("-100" + chat_part)
-            channel = await cli.get_entity(channel_id)
-        else: channel = await cli.get_entity(chat_part)
+        channel_id = int(chat_part) if chat_part.startswith('-') else int("-100" + chat_part) if chat_part.isdigit() else await cli.get_entity(chat_part)
+        channel = await cli.get_entity(channel_id)
         cname = getattr(channel, 'title', chat_part)
     except Exception as e: return await event.reply(f"❌ Channel not found: `{str(e)[:100]}`")
 
-    doc = {
-        "_id": str(ObjectId()), "owner_id": uid, "target_id": channel.id, "text": msg_text,
-        "reply_to_msg_id": None, "comment_to": post_id, "scheduled_ts": sched_ts,
-        "scheduled_short": _fmt_ist_12h(sched_ts), "scheduled_str": _fmt_ist_full(sched_ts),
-        "status": "pending", "created_at": time.time(), "post_link": post_link
-    }
+    doc = {"_id": str(ObjectId()), "owner_id": event.sender_id, "target_id": channel.id, "text": msg_text, "reply_to_msg_id": None, "comment_to": post_id, "scheduled_ts": sched_ts, "scheduled_short": _fmt_ist_12h(sched_ts), "scheduled_str": _fmt_ist_full(sched_ts), "status": "pending", "created_at": time.time(), "post_link": post_link}
     await sched_col.insert_one(doc)
     asyncio.create_task(_scheduler_runner(cli, doc))
     
     eta = int(sched_ts - time.time()); h, rem = divmod(eta, 3600); m2, s = divmod(rem, 60)
     preview = msg_text[:80] + ("..." if len(msg_text) > 80 else "")
-
-    confirm_msg = await event.reply(
-        f"✅ **CHANNEL COMMENT SCHEDULED!**\n"
-        f"━━━━━━━━━━━━━━━━━━\n\n"
-        f"🆔 **ID:** `{doc['_id'][:8]}`\n"
-        f"📢 **Channel:** `{cname}`\n"
-        f"🔗 **Post:** `{post_link}`\n"
-        f"🕐 **When:** `{doc['scheduled_short']}`\n"
-        f"📅 **Full:** `{doc['scheduled_str']}`\n"
-        f"⏳ **ETA:** `{h}h {m2}m {s}s`\n"
-        f"📝 **Comment:** {preview}\n\n"
-        f"Cancel: `.cancelschedule {doc['_id'][:8]}`",
-        parse_mode='markdown'
-    )
+    confirm_msg = await event.reply(f"✅ **CHANNEL COMMENT SCHEDULED!**\n🆔 `{doc['_id'][:8]}`\n📢 `{cname}`\n🕐 `{doc['scheduled_short']}`\n⏳ `{h}h {m2}m {s}s`\n📝 {preview}", parse_mode='markdown')
     await sched_col.update_one({"_id": doc["_id"]}, {"$set": {"confirm_chat_id": confirm_msg.chat_id, "confirm_msg_id": confirm_msg.id}})
 
 async def schedules_cmd(event):
@@ -461,39 +436,127 @@ async def cancelschedule_cmd(event):
     prefix = args.split()[0]
     m = await sched_col.find({"owner_id": event.sender_id, "status": "pending", "_id": {"$regex": f"^{re.escape(prefix)}"}}).to_list(length=5)
     if not m: return await event.reply("❌ Not found.")
-    if len(m) > 1: return await event.reply("⚠️ Multiple matches. Longer prefix do.")
-    
     doc = m[0]
     await sched_col.update_one({"_id": doc["_id"]}, {"$set": {"status": "cancelled"}})
     try:
         if doc.get("confirm_chat_id") and doc.get("confirm_msg_id"):
             await bot.delete_messages(int(doc["confirm_chat_id"]), [int(doc["confirm_msg_id"])])
     except: pass
-    await event.reply(f"✅ **Cancelled** `{doc['_id'][:8]}`\n📝 {doc['text'][:60]}")
+    await event.reply(f"✅ **Cancelled** `{doc['_id'][:8]}`")
+
+async def autocmt_cmd(event):
+    uid = event.sender_id
+    if not user_bots.get(uid): return await event.reply("❌ Pehle `/login` karo.")
+    args = get_args(event.message).strip()
+    if not args: return await event.reply("**Format:** `.autocmt on/off/list <link>`")
+    parts = args.split()
+    action = parts[0].lower()
+    if action == 'list':
+        cursor = autocmt_col.find({"owner_id": uid, "enabled": True})
+        rows = await cursor.to_list(length=50)
+        if not rows: return await event.reply("📭 Koi channel set nahi hai.")
+        return await event.reply("\n".join([f"📢 `{r['chat_id']}`" for r in rows]))
+    if len(parts) < 2: return await event.reply("❌ Channel link do.")
+    channel_input = parts[1]
+    try:
+        un = channel_input.replace("https://t.me/", "").replace("t.me/", "").split("/")[0]
+        ent = await user_bots[uid].get_entity(un) if not un.isdigit() else await user_bots[uid].get_entity(int(channel_input))
+        cid = str(ent.id)
+    except Exception as e: return await event.reply(f"❌ Not found: `{str(e)[:100]}`")
+    
+    if action == 'off':
+        await autocmt_col.update_one({"owner_id": uid, "chat_id": cid}, {"$set": {"enabled": False}}, upsert=True)
+        return await event.reply(f"✅ **Auto-Comment OFF** `{cid}`")
+    if action == 'on':
+        custom = [x.strip() for x in " ".join(parts[2:]).split("|") if x.strip()] if len(parts) > 2 else []
+        await autocmt_col.update_one({"owner_id": uid, "chat_id": cid}, {"$set": {"enabled": True, "replies": custom}}, upsert=True)
+        await register_autocmt_handler(uid)
+        return await event.reply(f"✅ **Auto-Comment ON** `{cid}`")
 
 async def alive_cmd(event):
-    if user_bots.get(event.sender_id):
-        await event.reply("✨ **Bot is Alive & Kicking!** ✨\n⚡ Userbot is online.", parse_mode="markdown")
-    else:
-        await event.reply("⚠️ Bot is Alive, but userbot is offline. `/login` karein.")
+    await event.reply("✨ **Bot is Alive!** ✨\n⚡ Status: " + ("Online" if user_bots.get(event.sender_id) else "Offline"))
 
 async def sync_cmd(event):
     global PING_OFFSET
     cli = user_bots.get(event.sender_id)
     if not cli: return await event.reply("❌ Pehle `/login` karo.")
-    msg = await event.reply("🔄 **Syncing... Calculating network latency...**")
+    msg = await event.reply("🔄 Syncing...")
     try:
         times = []
         for _ in range(5):
-            t0 = time.perf_counter()
-            await cli(PingRequest(ping_id=random.randint(1, 10**9)))
-            times.append(time.perf_counter() - t0)
+            t0 = time.perf_counter(); await cli(PingRequest(ping_id=random.randint(1, 10**9))); times.append(time.perf_counter() - t0)
             await asyncio.sleep(0.1)
-        avg_ping = sum(times) / len(times)
-        PING_OFFSET = avg_ping + 0.005 
-        await msg.edit(f"✅ **Sync Complete!**\n📡 `{avg_ping * 1000:.1f} ms`\n⚙️ Offset: `{PING_OFFSET * 1000:.1f} ms`", parse_mode='markdown')
-    except Exception as e:
-        await msg.edit(f"❌ **Sync Failed:** `{str(e)[:200]}`")
+        PING_OFFSET = (sum(times) / len(times)) + 0.005 
+        await msg.edit(f"✅ **Sync Complete!**\n⚙️ Offset: `{PING_OFFSET * 1000:.1f} ms`", parse_mode='markdown')
+    except Exception as e: await msg.edit(f"❌ Failed: `{str(e)[:100]}`")
+
+# ═══════════════════════════════════════════════
+# OWNER COMMANDS
+# ═══════════════════════════════════════════════
+async def users_cmd(event):
+    if event.sender_id != OWNER_ID: return
+    cursor = users_col.find({"active": True}).sort("logged_in_at", -1)
+    rows = await cursor.to_list(length=100)
+    if not rows: return await event.reply("📭 Koi user login nahi hai.")
+    text = f"👥 **TOTAL USERS ({len(rows)})**\n\n"
+    for i, u in enumerate(rows, 1):
+        st = "🟢" if user_bots.get(u["owner_id"]) else "🔴"
+        text += f"{i}. {st} **{u.get('first_name', 'Unknown')}**\n   🆔 `{u['owner_id']}` | 📱 `{u['phone']}`\n\n"
+    await event.reply(text, parse_mode="markdown")
+
+async def remove_cmd(event):
+    if event.sender_id != OWNER_ID: return
+    args = get_args(event.message).strip()
+    if not args: return await event.reply("`/remove <id>`")
+    try:
+        uid = int(args)
+        await kill_userbot(uid, remove_session=True)
+        await event.reply(f"✅ Removed user `{uid}`")
+    except: await event.reply("❌ Invalid ID.")
+
+async def block_cmd(event):
+    if event.sender_id != OWNER_ID: return
+    args = get_args(event.message).strip()
+    if not args: return await event.reply("`/block <id>`")
+    try:
+        uid = int(args)
+        await blocked_col.update_one({"owner_id": uid}, {"$set": {"owner_id": uid, "blocked_at": time.time()}}, upsert=True)
+        await kill_userbot(uid, remove_session=True)
+        await event.reply(f"🚫 User `{uid}` Blocked.")
+    except: await event.reply("❌ Invalid ID.")
+
+async def unblock_cmd(event):
+    if event.sender_id != OWNER_ID: return
+    args = get_args(event.message).strip()
+    if not args: return await event.reply("`/unblock <id>`")
+    try:
+        uid = int(args)
+        await blocked_col.delete_one({"owner_id": uid})
+        await event.reply(f"✅ User `{uid}` Unblocked.")
+    except: await event.reply("❌ Invalid ID.")
+
+async def broadcast_cmd(event):
+    if event.sender_id != OWNER_ID: return
+    args = get_args(event.message).strip()
+    if not args: return await event.reply("`/broadcast <msg>`")
+    cursor = users_col.find({"active": True})
+    users = await cursor.to_list(length=500)
+    prog = await event.reply(f"📢 Broadcasting to {len(users)} users...")
+    ok, fail = 0, 0
+    for u in users:
+        try:
+            await bot.send_message(u["owner_id"], f"📢 **Announcement**\n\n{args}")
+            ok += 1
+        except: fail += 1
+        await asyncio.sleep(0.05)
+    await prog.edit(f"✅ Done! Sent: {ok} | Failed: {fail}")
+
+async def stats_cmd(event):
+    if event.sender_id != OWNER_ID: return
+    total_u = await users_col.count_documents({"active": True})
+    total_s = await sched_col.count_documents({"status": "pending"})
+    online = sum(1 for u in user_bots.values() if u.is_connected())
+    await event.reply(f"📊 **Bot Stats**\n\n👥 Users: `{total_u}` (Online: `{online}`)\n⏰ Pending Schedules: `{total_s}`")
 
 # ═══════════════════════════════════════════════
 # HEALTH & STARTUP
@@ -523,13 +586,22 @@ async def main():
     bot.add_event_handler(status_cmd, events.NewMessage(pattern=r"^[./]status$", func=lambda e: e.is_private and not e.out))
     bot.add_event_handler(login_flow, events.NewMessage(func=lambda e: e.is_private and not e.out and not (e.text or "").startswith('/')))
     
-    # ── GLOBAL COMMANDS (Kisi bhi chat me chalenge) ──
+    # ── GLOBAL COMMANDS ──
     bot.add_event_handler(schedule_cmd, events.NewMessage(pattern=r"^[./]scdl(?:\s|$)"))
     bot.add_event_handler(schedulech_cmd, events.NewMessage(pattern=r"^[./]scdlch(?:\s|$)"))
     bot.add_event_handler(schedules_cmd, events.NewMessage(pattern=r"^[./]schedules$"))
     bot.add_event_handler(cancelschedule_cmd, events.NewMessage(pattern=r"^[./]cancelschedule(?:\s|$)"))
+    bot.add_event_handler(autocmt_cmd, events.NewMessage(pattern=r"^[./]autocmt(?:\s|$)"))
     bot.add_event_handler(alive_cmd, events.NewMessage(pattern=r"^[./]alive$"))
     bot.add_event_handler(sync_cmd, events.NewMessage(pattern=r"^[./]sync$"))
+
+    # ── OWNER COMMANDS ──
+    bot.add_event_handler(users_cmd, events.NewMessage(pattern=r"^[./]users$", func=lambda e: e.is_private and not e.out))
+    bot.add_event_handler(remove_cmd, events.NewMessage(pattern=r"^[./]remove(?:\s|$)", func=lambda e: e.is_private and not e.out))
+    bot.add_event_handler(block_cmd, events.NewMessage(pattern=r"^[./]block(?:\s|$)", func=lambda e: e.is_private and not e.out))
+    bot.add_event_handler(unblock_cmd, events.NewMessage(pattern=r"^[./]unblock(?:\s|$)", func=lambda e: e.is_private and not e.out))
+    bot.add_event_handler(broadcast_cmd, events.NewMessage(pattern=r"^[./]broadcast(?:\s|$)", func=lambda e: e.is_private and not e.out))
+    bot.add_event_handler(stats_cmd, events.NewMessage(pattern=r"^[./]stats$", func=lambda e: e.is_private and not e.out))
 
     await restore_all_userbots()
     asyncio.create_task(health_server())
