@@ -62,7 +62,7 @@ async def init_mongo():
 client: TelegramClient = None
 user_bots: dict[int, TelegramClient] = {}
 _TEMP_CLIENTS: dict[str, TelegramClient] = {}
-PING_OFFSET = 0.090
+PING_OFFSET = 0.085
 
 async def _safe_disconnect(cl):
     try: await cl.disconnect()
