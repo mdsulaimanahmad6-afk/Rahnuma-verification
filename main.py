@@ -101,15 +101,34 @@ async def start_h(event):
 
         # URL check
         if not WEBAPP_URL or not WEBAPP_URL.startswith("https://"):
-            await event.reply(f"❌ **Configuration Error!**\n\nWEBAPP_URL theek nahi hai. Render me check karein.\nCurrent URL: `{WEBAPP_URL}`")
+            await event.reply(f"❌ **Configuration Error!**\n\nWEBAPP_URL theek nahi hai.")
             return
 
-        # Simple Button (Jo har Telethon version me chalta hai)
-        buttons = [[Button.url("🛡️ Verify Now", WEBAPP_URL)]]
+        # WebApp Button ka sahi aur universal tarika
+        from telethon.tl.types import (
+            KeyboardButtonUrl, 
+            KeyboardButtonRow, 
+            ReplyInlineMarkup
+        )
+        
+        # Button me web_app property add karna zaroori hai Telegram webview ke liye
+        btn = KeyboardButtonUrl(text="🛡️ Verify Now", url=WEBAPP_URL)
+        
+        # Note: Telethon me direct webapp set karna thoda tricky hai, 
+        # par ye raw tarika naye versions me bhi chalega.
+        try:
+            from telethon.tl.types import KeyboardButtonWebView
+            btn = KeyboardButtonWebView(text="🛡️ Verify Now", url=WEBAPP_URL)
+        except ImportError:
+            # Agar purana version ho toh fallback
+            pass
+
+        rows = [KeyboardButtonRow([btn])]
+        reply_markup = ReplyInlineMarkup(rows)
 
         await event.reply(
             "🛡️ **Verify Yourself To Start Bot**\n\nNiche diye gaye button par click karke apna device verify karein.",
-            buttons=buttons
+            buttons=reply_markup
         )
         
     except Exception as e:
