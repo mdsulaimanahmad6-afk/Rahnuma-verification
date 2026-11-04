@@ -12,9 +12,6 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 WEBAPP_URL = os.environ.get("WEBAPP_URL", "")
 MONGO_URI = os.environ.get("MONGO_URI", "")
 
-# Yahan apne channels ke username daalein (Force-Join ke liye)
-REQUIRED_CHANNELS = ["@your_channel_1", "@your_channel_2"] 
-
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("Verifier")
 
@@ -93,32 +90,16 @@ async def start_h(event):
             if user_exists:
                 await event.reply("✅ **Aap verified hain!**\n\nAap bot use kar sakte hain.")
                 return
-
-        # 2. Force-Join Check (Agar channels add kiye hain toh)
-        not_joined = []
-        for channel in REQUIRED_CHANNELS:
-            try:
-                await bot.get_permissions(channel, user_id)
-            except Exception:
-                not_joined.append(channel)
-
-        if not_joined:
-            text = "⚠️ **Verification ke liye pehle in channels ko join karein:**\n\n"
-            buttons = []
-            for ch in not_joined:
-                link = f"https://t.me/{ch.replace('@', '')}"
-                buttons.append([Button.url(f"Join {ch}", link)])
-            buttons.append([Button.inline("✅ Maine Join Kar Liya", data=b"check_join")])
-            await event.reply(text, buttons=buttons)
+        else:
+            await event.reply("⚠️ Database not connected. Try later.")
             return
 
-        # 3. Web App Verification Button
+        # 2. URL check
         if not WEBAPP_URL or not WEBAPP_URL.startswith("https://"):
             await event.reply("❌ **WEBAPP_URL theek nahi hai.**")
             return
 
-        # Telethon ka sabse simple aur universal button
-        # Ye automatically Web App ki tarah khulega Telegram ke andar
+        # 3. Direct Web App Verify Button (Bina kisi Force-Join ke)
         buttons = [[Button.url("🛡️ Verify Now", WEBAPP_URL)]]
 
         await event.reply(
@@ -129,24 +110,6 @@ async def start_h(event):
     except Exception as e:
         log.error(f"Start error: {e}")
         await event.reply(f"❌ **Error:**\n`{str(e)}`")
-
-# ═══════════════ CALLBACK (Force-Join ke liye) ═══════════════
-@bot.on(events.CallbackQuery(data=b"check_join"))
-async def check_join_callback(event):
-    user_id = event.sender_id
-    not_joined = []
-    for channel in REQUIRED_CHANNELS:
-        try:
-            await bot.get_permissions(channel, user_id)
-        except Exception:
-            not_joined.append(channel)
-
-    if not_joined:
-        await event.answer("❌ Aapne abhi tak saare channels join nahi kiye hain!", alert=True)
-    else:
-        # Agar join kar liya toh naya message bhej de
-        await event.respond("✅ **Channels joined!** Ab niche button dabakar verify karein.", buttons=[[Button.url("🛡️ Verify Now", WEBAPP_URL)]])
-        await event.delete()
 
 # ═══════════════ RUNNER ═══════════════
 async def main():
