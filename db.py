@@ -16,6 +16,7 @@ pending_col = None
 blocked_col = None
 
 async def init_mongo():
+    # Yahan global declare karna sabse zaroori tha
     global _client, _db
     global users_col, sessions_col, sched_col, autocmt_col, pending_col, blocked_col
 
@@ -25,8 +26,10 @@ async def init_mongo():
 
     _client = AsyncIOMotorClient(uri, serverSelectionTimeoutMS=10000)
     await _client.admin.command("ping")
+    
     _db = _client["schedule_x_bot"]
 
+    # Ab ye variables update ho jayenge
     users_col    = _db["users"]
     sessions_col = _db["sessions"]
     sched_col    = _db["schedules"]
