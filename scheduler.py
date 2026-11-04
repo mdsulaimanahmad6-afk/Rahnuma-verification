@@ -1,4 +1,3 @@
-"""Multi-user scheduler — userbot se send karta hai."""
 import time
 import random
 import asyncio
@@ -7,7 +6,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 from telethon.errors import FloodWaitError
 from telethon.tl.functions import PingRequest
-from db import sched_col
+import db # <-- Yahan change kiya
 from userbot_manager import get_userbot
 
 log = logging.getLogger("scheduler")
@@ -24,7 +23,6 @@ async def runner(doc: dict, bot_client):
     try:
         target_ts = float(doc["scheduled_ts"])
         fire_ts = target_ts - PING_OFFSET
-
         while True:
             diff = fire_ts - time.time()
             if diff <= 0: break
@@ -34,12 +32,12 @@ async def runner(doc: dict, bot_client):
             elif diff > 0.1: await asyncio.sleep(0.02)
             else: await asyncio.sleep(0.005)
 
-        fresh = await sched_col.find_one({"_id": doc["_id"]})
+        fresh = await db.sched_col.find_one({"_id": doc["_id"]})
         if not fresh or fresh.get("status") != "pending": return
 
         cl = get_userbot(fresh["owner_id"])
         if cl is None:
-            await sched_col.update_one({"_id": doc["_id"]}, {"$set": {"status": "failed", "error": "userbot offline"}})
+            await db.sched_col.update_one({"_id": doc["_id"]}, {"$set": {"status": "failed", "error": "userbot offline"}})
             return
 
         try: await asyncio.wait_for(cl(PingRequest(ping_id=random.randint(1, 10**9))), timeout=1.5)
@@ -56,7 +54,7 @@ async def runner(doc: dict, bot_client):
                     except Exception: await cl.send_message(t, txt)
                 else: await cl.send_message(t, txt)
 
-                await sched_col.update_one({"_id": doc["_id"]}, {"$set": {"status": "sent", "sent_at": time.time()}})
+                await db.sched_col.update_one({"_id": doc["_id"]}, {"$set": {"status": "sent", "sent_at": time.time()}})
                 
                 if fresh.get("confirm_chat_id") and fresh.get("confirm_msg_id"):
                     try: await bot_client.delete_messages(int(fresh["confirm_chat_id"]), [int(fresh["confirm_msg_id"])])
@@ -65,15 +63,15 @@ async def runner(doc: dict, bot_client):
                 await asyncio.sleep(e.seconds)
                 try:
                     await cl.send_message(fresh["target_id"], fresh["text"])
-                    await sched_col.update_one({"_id": doc["_id"]}, {"$set": {"status": "sent", "sent_at": time.time()}})
-                except Exception as e2: await sched_col.update_one({"_id": doc["_id"]}, {"$set": {"status": "failed", "error": str(e2)[:200]}})
+                    await db.sched_col.update_one({"_id": doc["_id"]}, {"$set": {"status": "sent", "sent_at": time.time()}})
+                except Exception as e2: await db.sched_col.update_one({"_id": doc["_id"]}, {"$set": {"status": "failed", "error": str(e2)[:200]}})
             except Exception as e:
-                await sched_col.update_one({"_id": doc["_id"]}, {"$set": {"status": "failed", "error": str(e)[:200]}})
+                await db.sched_col.update_one({"_id": doc["_id"]}, {"$set": {"status": "failed", "error": str(e)[:200]}})
         asyncio.create_task(_send())
     except Exception as e: log.error(f"runner: {e}", exc_info=True)
 
 async def restore_all(bot_client):
-    cursor = sched_col.find({"status": "pending", "scheduled_ts": {"$gt": time.time() - 300}})
+    cursor = db.sched_col.find({"status": "pending", "scheduled_ts": {"$gt": time.time() - 300}})
     count = 0
     async for d in cursor:
         asyncio.create_task(runner(d, bot_client))
