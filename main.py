@@ -16,7 +16,6 @@ from telethon.errors import (
     PhoneNumberInvalidError, PasswordHashInvalidError, FloodWaitError
 )
 from telethon.tl.functions import PingRequest
-from telethon.tl.functions.channels import GetFullChannelRequest
 from motor.motor_asyncio import AsyncIOMotorClient
 
 load_dotenv()
@@ -39,25 +38,22 @@ db_client = None
 users_col = None
 sessions_col = None
 sched_col = None
-autocmt_col = None
 pending_col = None
 blocked_col = None
 
 async def init_mongo():
-    global db_client, users_col, sessions_col, sched_col, autocmt_col, pending_col, blocked_col
+    global db_client, users_col, sessions_col, sched_col, pending_col, blocked_col
     db_client = AsyncIOMotorClient(MONGO_URI)
     db = db_client["schedule_x_bot"]
     users_col = db["users"]
     sessions_col = db["sessions"]
     sched_col = db["schedules"]
-    autocmt_col = db["auto_comment"]
     pending_col = db["pending_logins"]
     blocked_col = db["blocked"]
     
     await users_col.create_index("owner_id", unique=True)
     await sessions_col.create_index("owner_id", unique=True)
     await sched_col.create_index([("owner_id", 1), ("status", 1)])
-    await autocmt_col.create_index([("owner_id", 1), ("chat_id", 1)], unique=True)
 
 # ═══════════════════════════════════════════════
 # GLOBALS & USERBOT MANAGER
@@ -86,7 +82,6 @@ async def spawn_userbot(owner_id: int) -> TelegramClient | None:
             await _safe_disconnect(cl)
             return None
         user_bots[owner_id] = cl
-        await register_autocmt_handler(owner_id)
         return cl
     except: return None
 
@@ -157,57 +152,6 @@ async def _scheduler_runner(cl: TelegramClient, doc: dict):
     except Exception as e: log.error(f"runner error: {e}")
 
 # ═══════════════════════════════════════════════
-# AUTO COMMENT SYSTEM (ADVANCED & FINAL)
-# ═══════════════════════════════════════════════
-DEFAULT_AUTO_CMTS = ["Wow, great update!", "Thank you so much sir!", "Finally the wait is over!", "Yes, this is amazing.", "Great work!", "Need this."]
-
-async def register_autocmt_handler(uid: int):
-    ub = user_bots.get(uid)
-    if not ub or getattr(ub, "_autocmt_registered", False): return
-    ub._autocmt_registered = True
-
-    @ub.on(events.NewMessage())
-    async def handler(event):
-        try:
-            cid = str(event.chat_id)
-            is_chan = event.is_channel
-            is_grp = event.is_group
-
-            # 1. Check if current chat is in DB
-            s = await autocmt_col.find_one({"owner_id": uid, "chat_id": cid, "enabled": True})
-            
-            # 2. Check if it's a Discussion Group linked to a channel in DB
-            if not s and is_grp:
-                try:
-                    full_chat = await ub(GetFullChannelRequest(channel=event.chat_id))
-                    if full_chat.full_chat.linked_chat_id:
-                        linked_cid = str(full_chat.full_chat.linked_chat_id)
-                        s = await autocmt_col.find_one({"owner_id": uid, "chat_id": linked_cid, "enabled": True})
-                except: pass
-
-            if not s: return # Not matched
-
-            me = await ub.get_me()
-            # Ignore own messages in groups to avoid spam loop
-            if event.sender_id == me.id and is_grp: return 
-            
-            txt = random.choice(s.get("replies") or DEFAULT_AUTO_CMTS)
-            
-            # 🚀 SENDING LOGIC
-            try:
-                if is_chan:
-                    await ub.send_message(event.chat_id, txt, comment_to=event.message.id)
-                    log.info(f"⚡ Auto-comment SENT on Channel {cid}")
-                elif is_grp:
-                    await event.reply(txt)
-                    log.info(f"⚡ Auto-comment SENT on Group {cid}")
-            except Exception as e:
-                log.error(f"❌ Auto-comment FAILED for {cid}. Error: {e}")
-                
-        except Exception as e: 
-            log.error(f"autocmt handler error: {e}")
-
-# ═══════════════════════════════════════════════
 # HELPERS
 # ═══════════════════════════════════════════════
 def get_args(m) -> str:
@@ -276,8 +220,6 @@ async def help_cmd(event):
         "▸ `.scdlch` — Channel post pe comment schedule karein\n"
         "▸ `.schedules` — Pending list\n"
         "▸ `.cancelschedule` — Cancel karein\n\n"
-        "📢 **ᴀᴜᴛᴏ-ᴄᴏᴍᴍᴇɴᴛ:**\n"
-        "▸ `.autocmt on/off/list`\n"
     )
     if event.sender_id == OWNER_ID:
         text += (
@@ -473,43 +415,6 @@ async def cancelschedule_cmd(event):
     except: pass
     await event.reply(f"✅ **Cancelled** `{doc['_id'][:8]}`")
 
-async def autocmt_cmd(event):
-    uid = event.sender_id
-    ub = user_bots.get(uid)
-    if not ub: return await event.reply("❌ Pehle `/login` karo.")
-    args = get_args(event.message).strip()
-    if not args: return await event.reply("**Format:** `.autocmt on/off/list <link>`")
-    parts = args.split()
-    action = parts[0].lower()
-    if action == 'list':
-        cursor = autocmt_col.find({"owner_id": uid, "enabled": True})
-        rows = await cursor.to_list(length=50)
-        if not rows: return await event.reply("📭 Koi channel set nahi hai.")
-        return await event.reply("\n".join([f"📢 `{r['chat_id']}`" for r in rows]))
-    if len(parts) < 2: return await event.reply("❌ Channel link do.")
-    channel_input = parts[1]
-    try:
-        un = channel_input.replace("https://t.me/", "").replace("t.me/", "").split("/")[0]
-        ent = await ub.get_entity(un) if not un.isdigit() else await ub.get_entity(int(channel_input))
-        target_cid = ent.id
-        if getattr(ent, 'broadcast', False):
-            try:
-                full = await ub(GetFullChannelRequest(channel=ent))
-                if full.full_chat.linked_chat_id:
-                    target_cid = full.full_chat.linked_chat_id
-            except: pass
-        cid = str(target_cid)
-    except Exception as e: return await event.reply(f"❌ Not found: `{str(e)[:100]}`")
-    
-    if action == 'off':
-        await autocmt_col.update_one({"owner_id": uid, "chat_id": cid}, {"$set": {"enabled": False}}, upsert=True)
-        return await event.reply(f"✅ **Auto-Comment OFF** `{cid}`")
-    if action == 'on':
-        custom = [x.strip() for x in " ".join(parts[2:]).split("|") if x.strip()] if len(parts) > 2 else []
-        await autocmt_col.update_one({"owner_id": uid, "chat_id": cid}, {"$set": {"enabled": True, "replies": custom}}, upsert=True)
-        await register_autocmt_handler(uid)
-        return await event.reply(f"✅ **Auto-Comment ON** `{cid}`\n💬 Target Discussion Group set.")
-
 async def alive_cmd(event):
     await event.reply("✨ **Bot is Alive!** ✨\n⚡ Status: " + ("Online" if user_bots.get(event.sender_id) else "Offline"))
 
@@ -628,7 +533,6 @@ async def main():
     bot.add_event_handler(schedulech_cmd, events.NewMessage(pattern=r"^[./]scdlch(?:\s|$)"))
     bot.add_event_handler(schedules_cmd, events.NewMessage(pattern=r"^[./]schedules$"))
     bot.add_event_handler(cancelschedule_cmd, events.NewMessage(pattern=r"^[./]cancelschedule(?:\s|$)"))
-    bot.add_event_handler(autocmt_cmd, events.NewMessage(pattern=r"^[./]autocmt(?:\s|$)"))
     bot.add_event_handler(alive_cmd, events.NewMessage(pattern=r"^[./]alive$"))
     bot.add_event_handler(sync_cmd, events.NewMessage(pattern=r"^[./]sync$"))
 
