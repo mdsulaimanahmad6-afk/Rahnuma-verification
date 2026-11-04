@@ -10,7 +10,7 @@ API_ID = int(os.environ.get("API_ID", "0"))
 API_HASH = os.environ.get("API_HASH", "")
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 WEBAPP_URL = os.environ.get("WEBAPP_URL", "")
-MONGO_URI = os.environ.get("MONGO_URI", "") # Render me ye dalna hoga
+MONGO_URI = os.environ.get("MONGO_URI", "")
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("Verifier")
@@ -30,8 +30,8 @@ async def init_db():
     try:
         client = AsyncIOMotorClient(MONGO_URI)
         db = client['verifier_bot']
-        ip_col = db['ip_addresses'] # IP store karne ke liye
-        users_col = db['verified_users'] # Users store karne ke liye
+        ip_col = db['ip_addresses'] 
+        users_col = db['verified_users'] 
         await client.admin.command('ping')
         log.info("✅ MongoDB Connected!")
     except Exception as e:
@@ -43,7 +43,7 @@ async def handle_index(request):
         with open('templates/index.html', 'r', encoding='utf-8') as f:
             return web.Response(text=f.read(), content_type='text/html')
     except Exception as e:
-        return web.Response(text=f"Error loading UI: {e}", status=500)
+        return web.Response(text=f"Error loading UI: {e}. Check if templates/index.html exists.", status=500)
 
 async def handle_verify(request):
     try:
@@ -58,23 +58,19 @@ async def handle_verify(request):
 
         log.info(f"Checking User: {user_id} | IP: {ip_address}")
 
-        # Agar database connect nahi hai
         if users_col is None:
             return web.json_response({"status": "error", "message": "Database error"})
 
-        # 1. Check karo ki user pehle se verified hai ya nahi
         user_exists = await users_col.find_one({"user_id": user_id})
         if user_exists:
             return web.json_response({"status": "success"})
 
-        # 2. Check karo ki is IP par pehle koi aur verify hua hai ya nahi
         ip_exists = await ip_col.find_one({"ip": ip_address})
         if ip_exists:
             if ip_exists['user_id'] != user_id:
                 log.warning(f"BLOCKED! IP {ip_address} already used by {ip_exists['user_id']}")
                 return web.json_response({"status": "error", "message": "Multiple accounts detected"})
 
-        # 3. Naya user verify kar do (Dono jagah save karo)
         await users_col.insert_one({"user_id": user_id})
         if not ip_exists:
             await ip_col.insert_one({"ip": ip_address, "user_id": user_id})
@@ -90,24 +86,36 @@ async def handle_verify(request):
 async def start_h(event):
     user_id = event.sender_id
     
-    # Check karo database me user verify hai ya nahi
-    if users_col is not None:
-        user_exists = await users_col.find_one({"user_id": user_id})
-        if user_exists:
-            await event.reply("✅ **Aap verified hain!**\n\nAap bot use kar sakte hain.")
+    try:
+        # Check karo database me user verify hai ya nahi
+        if users_col is not None:
+            user_exists = await users_col.find_one({"user_id": user_id})
+            if user_exists:
+                await event.reply("✅ **Aap verified hain!**\n\nAap bot use kar sakte hain.")
+                return
+        else:
+            await event.reply("⚠️ Database not connected. Try later.")
             return
-    else:
-        await event.reply("⚠️ Database not connected. Try later.")
 
-    buttons = [[Button.web_view("🛡️ Verify", WEBAPP_URL)]]
-    await event.reply(
-        "🛡️ **Verify Yourself To Start Bot**",
-        buttons=buttons
-    )
+        # URL check
+        if not WEBAPP_URL or not WEBAPP_URL.startswith("https://"):
+            await event.reply(f"❌ **Configuration Error!**\n\nWEBAPP_URL theek nahi hai. Render me check karein.\nCurrent URL: `{WEBAPP_URL}`")
+            return
+
+        # Button bhejo
+        buttons = [[Button.web_view("🛡️ Verify", WEBAPP_URL)]]
+        await event.reply(
+            "🛡️ **Verify Yourself To Start Bot**",
+            buttons=buttons
+        )
+        
+    except Exception as e:
+        log.error(f"Start command error: {e}")
+        await event.reply(f"❌ **Telegram Error:**\n`{str(e)}`")
 
 # ═══════════════ RUNNER ═══════════════
 async def main():
-    await init_db() # Database start karo
+    await init_db()
     await bot.start(bot_token=BOT_TOKEN)
     log.info("Bot started...")
     
