@@ -5,9 +5,9 @@ from aiohttp import web
 from telethon import TelegramClient, events
 from telethon.tl.custom import Button
 from telethon.tl.types import (
-    KeyboardButtonWebView, 
     ReplyInlineMarkup, 
-    KeyboardButtonRow
+    KeyboardButtonRow,
+    KeyboardButtonWebView
 )
 from motor.motor_asyncio import AsyncIOMotorClient
 
@@ -110,7 +110,7 @@ async def start_h(event):
             await event.reply(f"❌ **Configuration Error!**\n\nWEBAPP_URL theek nahi hai. Render me check karein.\nCurrent URL: `{WEBAPP_URL}`")
             return
 
-        # Sahi Web App Button banayein
+        # Sahi Web App Button (Manual construction)
         webapp_btn = KeyboardButtonWebView(text="🛡️ Verify Now", url=WEBAPP_URL)
         rows = [KeyboardButtonRow([webapp_btn])]
         reply_markup = ReplyInlineMarkup(rows)
