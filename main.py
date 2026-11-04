@@ -2,8 +2,11 @@ import os
 import asyncio
 import logging
 from aiohttp import web
-from telethon import TelegramClient, events, Button
+from telethon import TelegramClient, events
 from motor.motor_asyncio import AsyncIOMotorClient
+
+# Asli Web App Button ke liye import
+from telethon.tl.types import KeyboardButtonWebView, ReplyInlineMarkup, KeyboardButtonRow
 
 # ═══════════════ CONFIG ═══════════════
 API_ID = int(os.environ.get("API_ID", "0"))
@@ -84,7 +87,6 @@ async def start_h(event):
     user_id = event.sender_id
     
     try:
-        # 1. Check karo database me user verify hai ya nahi
         if users_col is not None:
             user_exists = await users_col.find_one({"user_id": user_id})
             if user_exists:
@@ -94,17 +96,18 @@ async def start_h(event):
             await event.reply("⚠️ Database not connected. Try later.")
             return
 
-        # 2. URL check
         if not WEBAPP_URL or not WEBAPP_URL.startswith("https://"):
             await event.reply("❌ **WEBAPP_URL theek nahi hai.**")
             return
 
-        # 3. Direct Web App Verify Button (Bina kisi Force-Join ke)
-        buttons = [[Button.url("🛡️ Verify Now", WEBAPP_URL)]]
+        # ASLI WEB APP BUTTON (Telegram ke andar khulega)
+        webapp_btn = KeyboardButtonWebView(text="🛡️ Verify Now", url=WEBAPP_URL)
+        rows = [KeyboardButtonRow([webapp_btn])]
+        reply_markup = ReplyInlineMarkup(rows)
 
         await event.reply(
             "🛡️ **Verify Yourself To Start Bot**\n\nNiche diye gaye button par click karke apna device verify karein.",
-            buttons=buttons
+            buttons=reply_markup
         )
         
     except Exception as e:
