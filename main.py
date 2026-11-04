@@ -5,9 +5,6 @@ from aiohttp import web
 from telethon import TelegramClient, events, Button
 from motor.motor_asyncio import AsyncIOMotorClient
 
-# Asli Web App Button ke liye import
-from telethon.tl.types import KeyboardButtonWebView, ReplyInlineMarkup, KeyboardButtonRow
-
 # ═══════════════ CONFIG ═══════════════
 API_ID = int(os.environ.get("API_ID", "0"))
 API_HASH = os.environ.get("API_HASH", "")
@@ -15,7 +12,7 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 WEBAPP_URL = os.environ.get("WEBAPP_URL", "")
 MONGO_URI = os.environ.get("MONGO_URI", "")
 
-# Yahan apne channel ka username daalein (Dhyan rahe bot wahan Admin hona chahiye)
+# Yahan apne channel ka username daalein
 REQUIRED_CHANNELS = ["@Rahnuma_e_Deen"] 
 
 logging.basicConfig(level=logging.INFO)
@@ -117,18 +114,17 @@ async def start_h(event):
             await event.reply(text, buttons=buttons)
             return
 
-        # ASLI WEB APP BUTTON (Telegram ke andar khulega)
+        # ASLI WEB APP BUTTON
         if not WEBAPP_URL or not WEBAPP_URL.startswith("https://"):
             await event.reply("❌ **WEBAPP_URL theek nahi hai.**")
             return
 
-        webapp_btn = KeyboardButtonWebView(text="🛡️ Verify Now", url=WEBAPP_URL)
-        rows = [KeyboardButtonRow([webapp_btn])]
-        reply_markup = ReplyInlineMarkup(rows)
+        # Telethon ka universal Button jo Web App ki tarah kaam karta hai
+        buttons = [[Button.url("🛡️ Verify Now", WEBAPP_URL)]]
 
         await event.reply(
             "🛡️ **Verify Yourself To Start Bot**\n\nNiche diye gaye button par click karke apna device verify karein.",
-            buttons=reply_markup
+            buttons=buttons
         )
         
     except Exception as e:
@@ -149,12 +145,8 @@ async def check_join_callback(event):
     if not_joined:
         await event.answer("❌ Aapne abhi tak saare channels join nahi kiye hain!", alert=True)
     else:
-        # Agar join kar liya toh naya message bhej de Web App button ke saath
-        webapp_btn = KeyboardButtonWebView(text="🛡️ Verify Now", url=WEBAPP_URL)
-        rows = [KeyboardButtonRow([webapp_btn])]
-        reply_markup = ReplyInlineMarkup(rows)
-        
-        await event.respond("✅ **Channels joined!** Ab niche button dabakar verify karein.", buttons=reply_markup)
+        buttons = [[Button.url("🛡️ Verify Now", WEBAPP_URL)]]
+        await event.respond("✅ **Channels joined!** Ab niche button dabakar verify karein.", buttons=buttons)
         await event.delete()
 
 # ═══════════════ RUNNER ═══════════════
